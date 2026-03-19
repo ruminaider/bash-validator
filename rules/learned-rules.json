@@ -1,0 +1,7 @@
+{
+  "_comment": "Auto-learned rules from user approval patterns. Updated by session-start hook.",
+  "_updated": null,
+  "safe_commands": [],
+  "git_subcommands": [],
+  "docker_subcommands": []
+}

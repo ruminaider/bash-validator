@@ -10,11 +10,13 @@ No commands are ever hard-denied; the user always gets to decide.
 """
 
 import ast
+import hashlib
 import json
 import os
 import re
 import shlex
 import sys
+from datetime import datetime, timezone
 
 # --- A. Whitelist ---
 
@@ -106,6 +108,28 @@ SAFE_DOCKER_SUBCOMMANDS = {
     "version", "info", "network", "volume", "container", "image",
     "system", "context", "manifest", "trust", "history", "diff",
 }
+
+# --- Learned rules (auto-updated by session-start hook) ---
+
+REJECTIONS_LOG = os.path.expanduser("~/.config/bash-validator/rejections.jsonl")
+
+
+def _load_learned_rules():
+    """Load auto-learned rules from user config."""
+    path = os.path.expanduser("~/.config/bash-validator/learned-rules.json")
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+_LEARNED = _load_learned_rules()
+
+# Merge learned rules into the working sets
+SAFE_GIT_SUBCOMMANDS.update(_LEARNED.get("git_subcommands", []))
+SAFE_DOCKER_SUBCOMMANDS.update(_LEARNED.get("docker_subcommands", []))
+# NOTE: safe_commands are NOT auto-merged — require explicit review
 
 SAFE_DEFAULTS_SUBCOMMANDS = {
     "read", "read-type", "find", "domains", "help",
@@ -737,6 +761,30 @@ def _is_standalone_tier3(command):
     return False
 
 
+def log_rejection(session_id, command):
+    """Log a rejected command (tokenized) for pattern learning."""
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+
+    cmd_name = os.path.basename(tokens[0]) if tokens else ""
+    subcmd = tokens[1] if len(tokens) > 1 and not tokens[1].startswith("-") else None
+
+    entry = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "sid": session_id[:8] if session_id else "?",
+        "cmd": cmd_name,
+        "subcmd": subcmd,
+        "tokens": tokens[:6],
+        "hash": hashlib.sha256(command.encode()).hexdigest()[:16],
+    }
+
+    os.makedirs(os.path.dirname(REJECTIONS_LOG), exist_ok=True)
+    with open(REJECTIONS_LOG, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
 def main():
     debug_log = "/tmp/bash-validator-debug.log"
     try:
@@ -749,6 +797,11 @@ def main():
                 f.write(f"[{sid}] NO CMD\n")
             output("allow")
         safe = check_command(command)
+        if not safe:
+            try:
+                log_rejection(sid, command)
+            except Exception:
+                pass
         decision = "allow" if safe else "ask"
         reason = None if safe else "Requires user approval"
         with open(debug_log, "a") as f:

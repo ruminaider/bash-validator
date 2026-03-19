@@ -1,0 +1,34 @@
+{
+  "_comment": "Commands and patterns that can NEVER be auto-approved by the learning system. This file is read-only and must not be modified by any automated process.",
+  "never_safe_commands": [
+    "rm", "rmdir", "shred", "dd", "mkfs", "fdisk",
+    "chmod", "chown", "chgrp", "setfacl",
+    "sudo", "su", "doas",
+    "systemctl", "service", "launchctl",
+    "ssh", "scp", "sftp", "telnet", "nc", "ncat",
+    "docker", "podman", "kubectl", "helm", "terraform",
+    "aws", "gcloud", "az",
+    "psql", "mysql", "mongosh", "redis-cli",
+    "kill", "killall", "pkill",
+    "shutdown", "reboot", "halt",
+    "iptables", "ufw", "firewall-cmd",
+    "crontab", "at",
+    "mount", "umount"
+  ],
+  "never_safe_git_subcommands": [
+    "push", "reset", "rebase", "merge", "cherry-pick",
+    "clean", "checkout", "switch", "restore",
+    "submodule", "subtree", "gc", "prune",
+    "filter-branch", "replace", "notes"
+  ],
+  "never_relaxable_deny_patterns": {
+    "_comment": "These deny patterns in the validator must never be weakened",
+    "inline_exec_flags": true,
+    "shell_c_flag": true,
+    "find_delete": true,
+    "rsync_delete": true,
+    "command_substitution": true,
+    "process_substitution": true,
+    "heredocs": true
+  }
+}

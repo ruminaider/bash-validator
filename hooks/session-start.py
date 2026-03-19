@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+"""SessionStart hook: analyzes rejection log and auto-updates learned rules.
+
+Runs at the beginning of each Claude Code session. Reads the rejection log,
+identifies recurring patterns, and updates learned-rules.json within the
+bounds of the immutable deny list.
+
+Returns additionalContext with a summary of any newly learned patterns.
+"""
+
+import json
+import os
+import sys
+from collections import Counter
+from datetime import datetime, timezone
+
+PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT", os.path.dirname(os.path.dirname(__file__)))
+REJECTIONS_LOG = os.path.expanduser("~/.config/bash-validator/rejections.jsonl")
+LEARNED_RULES = os.path.expanduser("~/.config/bash-validator/learned-rules.json")
+IMMUTABLE_DENY = os.path.join(PLUGIN_ROOT, "rules", "immutable-deny.json")
+
+# Thresholds for auto-learning
+MIN_OCCURRENCES = 5       # Pattern must appear at least this many times
+MIN_SESSIONS = 3          # Across at least this many distinct sessions
+MAX_LEARN_PER_CYCLE = 3   # Learn at most this many new patterns per session start
+
+
+def load_json(path, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return default
+
+
+def load_rejections():
+    """Load rejection log entries."""
+    entries = []
+    try:
+        with open(REJECTIONS_LOG) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        entries.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+    except FileNotFoundError:
+        pass
+    return entries
+
+
+def analyze_patterns(entries, immutable, learned):
+    """Find patterns eligible for auto-learning."""
+    never_commands = set(immutable.get("never_safe_commands", []))
+    never_git = set(immutable.get("never_safe_git_subcommands", []))
+
+    already_learned_cmds = set(learned.get("safe_commands", []))
+    already_learned_git = set(learned.get("git_subcommands", []))
+    already_learned_docker = set(learned.get("docker_subcommands", []))
+
+    # Count (cmd, subcmd) tuples and track unique sessions
+    pattern_counts = Counter()
+    pattern_sessions = {}
+
+    for entry in entries:
+        cmd = entry.get("cmd", "")
+        subcmd = entry.get("subcmd")
+        sid = entry.get("sid", "?")
+        key = (cmd, subcmd)
+
+        pattern_counts[key] += 1
+        if key not in pattern_sessions:
+            pattern_sessions[key] = set()
+        pattern_sessions[key].add(sid)
+
+    proposals = []
+    for (cmd, subcmd), count in pattern_counts.most_common():
+        if len(proposals) >= MAX_LEARN_PER_CYCLE:
+            break
+
+        sessions = len(pattern_sessions.get((cmd, subcmd), set()))
+        if count < MIN_OCCURRENCES or sessions < MIN_SESSIONS:
+            continue
+
+        # Determine what category this would go into
+        if cmd == "git" and subcmd:
+            if subcmd in never_git:
+                continue
+            if subcmd in already_learned_git:
+                continue
+            proposals.append({"type": "git_subcommands", "value": subcmd,
+                              "count": count, "sessions": sessions})
+
+        elif cmd == "docker" and subcmd:
+            if subcmd in already_learned_docker:
+                continue
+            proposals.append({"type": "docker_subcommands", "value": subcmd,
+                              "count": count, "sessions": sessions})
+
+        # NOTE: We do NOT auto-add to safe_commands. That requires
+        # the user to explicitly approve via a review command.
+
+    return proposals
+
+
+def apply_proposals(learned, proposals):
+    """Apply approved proposals to learned rules."""
+    changed = False
+    for p in proposals:
+        category = p["type"]
+        value = p["value"]
+        if value not in learned.get(category, []):
+            learned.setdefault(category, []).append(value)
+            changed = True
+
+    if changed:
+        learned["_updated"] = datetime.now(timezone.utc).isoformat()
+        os.makedirs(os.path.dirname(LEARNED_RULES), exist_ok=True)
+        with open(LEARNED_RULES, "w") as f:
+            json.dump(learned, f, indent=2)
+
+    return changed
+
+
+def main():
+    try:
+        raw = sys.stdin.read()
+        # SessionStart may or may not pass hook_input
+    except Exception:
+        pass
+
+    immutable = load_json(IMMUTABLE_DENY, {})
+    learned = load_json(LEARNED_RULES, {
+        "safe_commands": [], "git_subcommands": [],
+        "docker_subcommands": [],
+    })
+
+    entries = load_rejections()
+    if not entries:
+        print(json.dumps({}))
+        sys.exit(0)
+
+    proposals = analyze_patterns(entries, immutable, learned)
+    if not proposals:
+        print(json.dumps({}))
+        sys.exit(0)
+
+    changed = apply_proposals(learned, proposals)
+
+    if changed:
+        summary_lines = ["Bash validator learned new patterns:"]
+        for p in proposals:
+            summary_lines.append(
+                f"  - {p['type']}: {p['value']} "
+                f"(seen {p['count']}x across {p['sessions']} sessions)"
+            )
+
+        context = "\n".join(summary_lines)
+        result = {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": context,
+            }
+        }
+        print(json.dumps(result))
+    else:
+        print(json.dumps({}))
+
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()
