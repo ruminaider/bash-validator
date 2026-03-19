@@ -6,17 +6,17 @@
   },
   "metadata": {
     "description": "Bash command safety validator plugin",
-    "version": "1.0.0"
+    "version": "2.0.0"
   },
   "plugins": [
     {
       "name": "bash-validator",
       "description": "Validates Bash commands against a safety whitelist before execution",
-      "version": "1.1.0",
+      "version": "2.0.0",
       "author": {
         "name": "Albert Gwo"
       },
-      "tags": ["hooks", "security", "bash", "whitelist"],
+      "tags": ["hooks", "security", "bash", "whitelist", "ast-analysis", "adaptive", "claude-code"],
       "source": "./"
     }
   ]
