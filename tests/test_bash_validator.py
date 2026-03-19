@@ -582,6 +582,33 @@ class TestTier2DangerousFlags:
         assert check_command("rsync -av src/ dst/") is True
         assert check_command("rsync -rz remote:path local/") is True
 
+    def test_sed_inplace_denied(self):
+        """sed -i modifies files in place — must prompt."""
+        assert check_command("sed -i 's/foo/bar/' file.txt") is False
+        assert check_command("sed --in-place 's/foo/bar/' file.txt") is False
+        assert check_command("sed -i.bak 's/foo/bar/' file.txt") is False
+
+    def test_sed_readonly_allowed(self):
+        """sed without -i just prints to stdout — safe."""
+        assert check_command("sed 's/foo/bar/g' file.txt") is True
+        assert check_command("sed -n '/pattern/p' file.txt") is True
+        assert check_command("echo hello | sed 's/hello/world/'") is True
+
+    def test_awk_inplace_denied(self):
+        """awk -i inplace modifies files — must prompt."""
+        assert check_command("awk -i inplace '{print}' file.txt") is False
+
+    def test_awk_readonly_allowed(self):
+        """awk without -i just prints to stdout — safe."""
+        assert check_command("awk '{print $1}' file.txt") is True
+        assert check_command("awk -F: '{print $1}' /etc/passwd") is True
+
+    def test_sed_self_modification_denied(self):
+        """sed -i targeting the validator itself — the original vulnerability."""
+        assert check_command(
+            "sed -i 's/SAFE_COMMANDS = {/SAFE_COMMANDS = {\\n    \"rm\",/' hooks/bash-validator.py"
+        ) is False
+
 
 class TestTier2GitDangerousFlags:
     """Git subcommands with dangerous flags."""

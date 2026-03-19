@@ -154,6 +154,8 @@ DANGEROUS_CMD_FLAGS = {
               "--delete-during", "--delete-excluded",
               "--delete-delay", "--delete-missing-args",
               "--remove-source-files"},
+    "sed":   {"-i", "--in-place"},
+    "awk":   {"-i"},
 }
 
 # --- C. Python AST analyzer (for inline python3 -c) ---
@@ -394,8 +396,13 @@ def check_segment(segment):
 
     # Deny dangerous flags on specific commands
     if cmd_name in DANGEROUS_CMD_FLAGS:
-        if any(tok in DANGEROUS_CMD_FLAGS[cmd_name] for tok in rest):
-            return False
+        dangerous_flags = DANGEROUS_CMD_FLAGS[cmd_name]
+        for tok in rest:
+            if tok in dangerous_flags:
+                return False
+            # sed -i accepts optional suffix: -i.bak, -i'', -i''
+            if cmd_name == "sed" and (tok.startswith("-i") or tok.startswith("--in-place")):
+                return False
 
     # Deny find -exec with destructive targets
     if cmd_name == 'find':
