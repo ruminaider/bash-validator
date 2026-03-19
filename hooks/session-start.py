@@ -18,6 +18,11 @@ PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT", os.path.dirname(os.path.dirna
 REJECTIONS_LOG = os.path.expanduser("~/.config/bash-validator/rejections.jsonl")
 LEARNED_RULES = os.path.expanduser("~/.config/bash-validator/learned-rules.json")
 IMMUTABLE_DENY = os.path.join(PLUGIN_ROOT, "rules", "immutable-deny.json")
+SKILL_PATH = os.path.join(
+    PLUGIN_ROOT, "skills", "validator-friendly-commands", "SKILL.md"
+)
+DYNAMIC_START = "<!-- DYNAMIC:START -->"
+DYNAMIC_END = "<!-- DYNAMIC:END -->"
 
 # Thresholds for auto-learning
 MIN_OCCURRENCES = 5       # Pattern must appear at least this many times
@@ -123,6 +128,73 @@ def apply_proposals(learned, proposals):
     return changed
 
 
+def get_top_rejection_patterns(entries, limit=5):
+    """Get the most frequently rejected command patterns."""
+    pattern_counts = Counter()
+    for entry in entries:
+        cmd = entry.get("cmd", "")
+        subcmd = entry.get("subcmd", "")
+        key = f"{cmd} {subcmd}".strip() if subcmd else cmd
+        pattern_counts[key] += 1
+    return pattern_counts.most_common(limit)
+
+
+def update_skill_guidance(entries):
+    """Update the SKILL.md dynamic section with rejection-based guidance."""
+    if not entries:
+        return
+
+    top_patterns = get_top_rejection_patterns(entries)
+    if not top_patterns:
+        return
+
+    lines = [
+        DYNAMIC_START,
+        "",
+        "## Recently Rejected Patterns",
+        "",
+        "The following command patterns have been frequently rejected by the",
+        "validator. Use the suggested alternatives instead:",
+        "",
+    ]
+
+    for pattern, count in top_patterns:
+        parts = pattern.split()
+        cmd = parts[0] if parts else ""
+
+        if cmd in ("python3", "python") and len(parts) == 1:
+            lines.append(f"- `{cmd} -c` was rejected {count} times - "
+                        "use `jq` for JSON processing or write a script file")
+        elif cmd == "node" and len(parts) == 1:
+            lines.append(f"- `{cmd} -e` was rejected {count} times - "
+                        "use `jq` for JSON processing or write a script file")
+        elif cmd == "git" and len(parts) > 1:
+            subcmd = parts[1]
+            lines.append(f"- `git {subcmd}` was rejected {count} times - "
+                        "this subcommand requires user approval")
+        else:
+            lines.append(f"- `{pattern}` was rejected {count} times")
+
+    lines.extend(["", DYNAMIC_END])
+    new_section = "\n".join(lines)
+
+    try:
+        with open(SKILL_PATH) as f:
+            content = f.read()
+
+        if DYNAMIC_START in content and DYNAMIC_END in content:
+            start = content.index(DYNAMIC_START)
+            end = content.index(DYNAMIC_END) + len(DYNAMIC_END)
+            content = content[:start] + new_section + content[end:]
+        else:
+            content = content.rstrip() + "\n\n" + new_section + "\n"
+
+        with open(SKILL_PATH, "w") as f:
+            f.write(content)
+    except (FileNotFoundError, IOError):
+        pass
+
+
 def main():
     try:
         raw = sys.stdin.read()
@@ -140,6 +212,12 @@ def main():
     if not entries:
         print(json.dumps({}))
         sys.exit(0)
+
+    # Layer 3: Update skill guidance based on rejection patterns
+    try:
+        update_skill_guidance(entries)
+    except Exception:
+        pass
 
     proposals = analyze_patterns(entries, immutable, learned)
     if not proposals:

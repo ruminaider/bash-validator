@@ -83,3 +83,6 @@ jq handles more than you might expect:
 - Enumeration: `to_entries[] | "\(.key + 1). \(.value)"`
 - Column alignment: `(" " * ($width - (.field | tostring | length)))`
 - Math: `map(.count) | add`
+
+<!-- DYNAMIC:START -->
+<!-- DYNAMIC:END -->
