@@ -99,3 +99,35 @@ pytest tests/ -v
 ```
 
 Tests are organized by tier: `TestTier1*` (safe), `TestTier2*` (flagged), `TestTier3*` (passthrough). Add new test cases to the appropriate tier class.
+
+## Adaptive Learning
+
+The validator has three adaptive layers:
+
+### Layer 1: Inline Code AST Analysis
+
+When `python3 -c` or `node -e` commands are encountered, the validator parses
+the code to determine safety:
+- **Python**: Uses `ast.parse()` with a safe-modules allowlist. Code that only
+  imports safe modules (json, sys, re, collections, etc.) and doesn't call
+  dangerous builtins (open, exec, eval, getattr) auto-approves.
+- **Node.js**: Uses regex pattern matching for dangerous APIs (fs, child_process,
+  net, eval, process.exit).
+
+### Layer 2: Pattern Learning
+
+Rejected commands are logged (tokenized) to `~/.config/bash-validator/rejections.jsonl`.
+At session start, the `session-start.py` hook analyzes the log:
+- Patterns appearing 5+ times across 3+ sessions are auto-learned
+- Learned patterns are stored in `~/.config/bash-validator/learned-rules.json`
+- The immutable deny list (`rules/immutable-deny.json`) prevents dangerous
+  commands from ever being learned
+- Currently learns: git subcommands, docker subcommands
+- Does NOT auto-learn: new entries in SAFE_COMMANDS
+
+### Layer 3: Skill Adaptation
+
+The SessionStart hook updates the `validator-friendly-commands` skill with
+recently rejected patterns, so subagents learn to generate better commands.
+Updates are written between `<!-- DYNAMIC:START -->` and `<!-- DYNAMIC:END -->`
+markers in the skill file.
