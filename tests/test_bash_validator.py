@@ -75,6 +75,13 @@ class TestTier1BasicCommands:
         assert check_command(cmd) is True
 
     @pytest.mark.parametrize("cmd", [
+        "true",
+        "false",
+    ])
+    def test_shell_builtins_noop(self, cmd):
+        assert check_command(cmd) is True
+
+    @pytest.mark.parametrize("cmd", [
         "cd /tmp",
         "mkdir -p /tmp/testdir",
         "touch newfile.txt",
@@ -258,6 +265,39 @@ class TestTier1Git:
         assert check_command(cmd) is True
 
     @pytest.mark.parametrize("cmd", [
+        "git ls-tree HEAD",
+        "git ls-tree -r --name-only HEAD",
+        "git ls-tree -r --name-only FETCH_HEAD -- packages/",
+        "git cat-file -t HEAD",
+        "git cat-file -p HEAD:README.md",
+        "git describe --tags",
+        "git describe --always --dirty",
+        "git shortlog -sn",
+        "git rev-list --count HEAD",
+        "git rev-list HEAD..origin/main",
+        "git merge-base main feature",
+        "git name-rev HEAD",
+        "git cherry -v main",
+        "git diff-tree --no-commit-id -r HEAD",
+        "git for-each-ref --format='%(refname)' refs/heads/",
+        "git show-ref --heads",
+        "git verify-commit HEAD",
+        "git verify-tag v1.0.0",
+        "git count-objects -v",
+    ])
+    def test_git_readonly_subcommands(self, cmd):
+        assert check_command(cmd) is True
+
+    def test_git_ls_tree_in_pipeline(self):
+        """git ls-tree piped to grep/head — common repo exploration pattern."""
+        assert check_command(
+            "git ls-tree -r --name-only FETCH_HEAD | grep 'packages/engine/' | head -50"
+        ) is True
+        assert check_command(
+            "git ls-tree -r --name-only FETCH_HEAD -- packages/ | head -80 2>&1"
+        ) is True
+
+    @pytest.mark.parametrize("cmd", [
         "git branch",
         "git branch -a",
         "git branch --list",
@@ -349,6 +389,9 @@ class TestTier1Compound:
 
     def test_or(self):
         assert check_command("test -f foo || echo missing") is True
+        assert check_command("cat file.txt | grep pattern || true") is True
+        assert check_command("grep -r 'TODO' . || true") is True
+        assert check_command("cat file.json | grep prettier 2>/dev/null || true") is True
 
     def test_semicolon(self):
         assert check_command("echo hello; echo world") is True
@@ -460,23 +503,33 @@ class TestTier2ShellInlineExec:
 
 
 class TestTier2InterpreterInlineExec:
-    """Interpreter inline execution flags — always denied."""
+    """Interpreter inline execution flags — denied unless analyzer approves."""
 
     @pytest.mark.parametrize("cmd", [
         "node -e 'process.exit(1)'",
+    ])
+    def test_node_inline_dangerous_denied(self, cmd):
+        assert check_command(cmd) is False
+
+    @pytest.mark.parametrize("cmd", [
         "node --eval 'console.log(1)'",
         "node -p 'Math.random()'",
         "node --print '1+1'",
     ])
-    def test_node_inline_denied(self, cmd):
-        assert check_command(cmd) is False
+    def test_node_inline_safe_allowed(self, cmd):
+        assert check_command(cmd) is True
 
     @pytest.mark.parametrize("cmd", [
         "python -c 'import os; os.system(\"rm -rf /\")'",
+    ])
+    def test_python_inline_dangerous_denied(self, cmd):
+        assert check_command(cmd) is False
+
+    @pytest.mark.parametrize("cmd", [
         "python3 -c 'print(1)'",
     ])
-    def test_python_inline_denied(self, cmd):
-        assert check_command(cmd) is False
+    def test_python_inline_safe_allowed(self, cmd):
+        assert check_command(cmd) is True
 
     @pytest.mark.parametrize("cmd", [
         "ruby -e 'puts 1'",
@@ -1114,18 +1167,23 @@ class TestFix8InterpreterEAfterScript:
 
     @pytest.mark.parametrize("cmd", [
         "node -e 'process.exit(1)'",
-        "node --eval 'console.log(1)'",
         "python -c 'import os'",
-        "python3 -c 'print(1)'",
         "ruby -e 'puts 1'",
     ])
-    def test_interpreter_flag_before_script_still_denied(self, cmd):
+    def test_interpreter_dangerous_flag_before_script_denied(self, cmd):
         assert check_command(cmd) is False
 
+    @pytest.mark.parametrize("cmd", [
+        "node --eval 'console.log(1)'",
+        "python3 -c 'print(1)'",
+    ])
+    def test_interpreter_safe_inline_before_script_allowed(self, cmd):
+        assert check_command(cmd) is True
+
     def test_interpreter_flags_with_other_flags_before_script(self):
-        """Dangerous flags with other node flags before script still denied."""
-        assert check_command("node --max-old-space-size=4096 -e 'evil'") is False
-        assert check_command("python -u -c 'evil'") is False
+        """Dangerous inline code with other flags before script still denied."""
+        assert check_command("node --max-old-space-size=4096 -e 'process.exit(1)'") is False
+        assert check_command("python -u -c 'import os'") is False
         assert check_command("ruby -w -e 'evil'") is False
 
     def test_interpreter_safe_flags_before_script(self):
@@ -1490,7 +1548,7 @@ class TestHookDecisionIntegration:
 
     def test_unsafe_patterns_ask(self):
         """Dangerous patterns → prompt user (not hard-block)."""
-        assert self._hook_decision("node -e 'evil'") == "ask"
+        assert self._hook_decision("node -e 'process.exit(1)'") == "ask"
         assert self._hook_decision("find . -delete") == "ask"
         assert self._hook_decision("rsync --delete src/ dst/") == "ask"
         assert self._hook_decision("bash -c 'evil'") == "ask"
@@ -1556,7 +1614,7 @@ class TestOutputFormat:
         assert "permissionDecisionReason" in out["hookSpecificOutput"]
 
     def test_ask_dangerous_pattern_output(self):
-        out = self._run_hook("node -e 'evil'")
+        out = self._run_hook("node -e 'process.exit(1)'")
         assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
         assert "permissionDecisionReason" in out["hookSpecificOutput"]
         assert len(out["hookSpecificOutput"]["permissionDecisionReason"]) > 0
@@ -1584,6 +1642,8 @@ class TestDecisionMatrix:
         "git -C /repo status", "git --no-pager log",
         "git pull", "git pull --rebase", "git pull origin main",
         "node script.js", "python script.py", "python3 app.py",
+        # Safe inline code (analyzers approve)
+        "node --eval 'console.log(1)'", "python3 -c 'print(1)'",
         "npm install", "cargo build", "make",
         "find . -name '*.py'", "grep pattern file",
         "curl http://localhost:8080",
@@ -1595,9 +1655,9 @@ class TestDecisionMatrix:
 
     # --- ASK: everything else → prompt user ---
     @pytest.mark.parametrize("cmd", [
-        # Interpreter inline exec
-        "node -e 'process.exit(1)'", "node --eval 'console.log(1)'",
-        "python -c 'import os'", "python3 -c 'print(1)'",
+        # Interpreter inline exec (dangerous code)
+        "node -e 'process.exit(1)'",
+        "python -c 'import os'",
         "ruby -e 'puts 1'", "deno eval 'Deno.exit()'",
         "bun eval 'process.exit()'",
         # Shell -c
@@ -1661,7 +1721,8 @@ class TestDecisionBoundaries:
         return "allow" if check_command(cmd) else "ask"
 
     def test_node_e_vs_script(self):
-        assert self._decision("node -e 'evil'") == "ask"
+        assert self._decision("node -e 'process.exit(1)'") == "ask"
+        assert self._decision("node -e 'console.log(1)'") == "allow"
         assert self._decision("node script.js") == "allow"
         assert self._decision("node script.js -e flag") == "allow"
 

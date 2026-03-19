@@ -9,6 +9,7 @@ Decision: check_command() True → "allow", otherwise → "ask".
 No commands are ever hard-denied; the user always gets to decide.
 """
 
+import ast
 import json
 import os
 import re
@@ -62,6 +63,8 @@ SAFE_COMMANDS = {
     "docker",
     # Process info
     "lsof", "ps", "pgrep", "top",
+    # Shell builtins (no-ops)
+    "true", "false",
     # macOS
     "open", "pbcopy", "pbpaste", "mdfind", "locate", "defaults",
     # Terminals
@@ -80,6 +83,10 @@ SAFE_GIT_SUBCOMMANDS = {
     "status", "diff", "log", "show", "add", "commit", "fetch", "pull",
     "blame", "rev-parse", "ls-files", "remote", "config", "grep", "tag",
     "stash", "worktree",
+    # Read-only inspection commands
+    "ls-tree", "cat-file", "describe", "shortlog", "rev-list",
+    "merge-base", "name-rev", "cherry", "diff-tree", "for-each-ref",
+    "show-ref", "verify-commit", "verify-tag", "count-objects",
 }
 
 # Git subcommands allowed UNLESS dangerous flags are present
@@ -124,6 +131,139 @@ DANGEROUS_CMD_FLAGS = {
               "--delete-delay", "--delete-missing-args",
               "--remove-source-files"},
 }
+
+# --- C. Python AST analyzer (for inline python3 -c) ---
+
+SAFE_PYTHON_MODULES = {
+    "__future__",
+    "json", "csv", "sys",
+    "re", "string", "textwrap", "unicodedata", "difflib", "html",
+    "collections", "heapq", "bisect", "array",
+    "itertools", "functools", "operator",
+    "math", "cmath", "decimal", "fractions", "statistics", "random", "numbers",
+    "datetime", "time", "calendar", "zoneinfo",
+    "typing", "types", "abc", "dataclasses", "enum",
+    "base64", "binascii", "codecs", "hashlib", "hmac",
+    "ast", "tokenize", "keyword",
+    "pprint", "reprlib",
+    "copy", "contextlib", "warnings", "traceback", "struct",
+}
+
+SAFE_SYS_ATTRS = {
+    "stdin", "stdout", "stderr", "argv",
+    "maxsize", "float_info", "int_info", "version", "version_info",
+    "platform", "byteorder", "maxunicode",
+}
+
+DANGEROUS_BUILTINS = {
+    "open", "exec", "eval", "compile", "__import__",
+    "getattr", "setattr", "delattr",
+    "globals", "locals", "vars",
+    "breakpoint", "exit", "quit", "input",
+}
+
+
+def is_safe_inline_python(code_str):
+    """Analyze a Python code string via AST to decide if it's safe.
+
+    Returns True if the code only uses safe modules, no dangerous builtins,
+    no file I/O, no network, no code execution. Returns False on any
+    SyntaxError or if any dangerous construct is found.
+    """
+    try:
+        tree = ast.parse(code_str)
+    except SyntaxError:
+        return False
+
+    for node in ast.walk(tree):
+        # Check dunder name access (__builtins__, __import__, etc.)
+        if isinstance(node, ast.Name):
+            if node.id.startswith("__") and node.id.endswith("__"):
+                return False
+
+        # Check imports
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                top_module = alias.name.split('.')[0]
+                if top_module not in SAFE_PYTHON_MODULES:
+                    return False
+
+        elif isinstance(node, ast.ImportFrom):
+            if node.module is None:
+                return False
+            top_module = node.module.split('.')[0]
+            if top_module not in SAFE_PYTHON_MODULES:
+                return False
+
+        # Check dangerous builtin calls
+        elif isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name) and func.id in DANGEROUS_BUILTINS:
+                return False
+
+        # Check attribute access
+        elif isinstance(node, ast.Attribute):
+            # sys.exit, sys.modules, etc. — only allow safe sys attrs
+            if isinstance(node.value, ast.Name) and node.value.id == "sys":
+                if node.attr not in SAFE_SYS_ATTRS:
+                    return False
+
+            # Dunder attribute access (sandbox escape patterns)
+            if node.attr.startswith("__") and node.attr.endswith("__"):
+                return False
+
+    return True
+
+
+# --- D. Node.js regex analyzer (for inline node -e) ---
+
+_JS_DANGEROUS_PATTERNS = [
+    # File system access
+    r"""\brequire\s*\(\s*['"](?:node:)?fs['"]\s*\)""",
+    r"""\breadFileSync\b""",
+    r"""\bwriteFileSync\b""",
+    r"""\bunlinkSync\b""",
+    r"""\bmkdirSync\b""",
+    r"""\brmdirSync\b""",
+    r"""\brmSync\b""",
+    # Child process
+    r"""\brequire\s*\(\s*['"](?:node:)?child_process['"]\s*\)""",
+    r"""\bexecSync\b""",
+    r"""\bspawnSync\b""",
+    r"""\bexecFileSync\b""",
+    # Network
+    r"""\brequire\s*\(\s*['"](?:node:)?https?['"]\s*\)""",
+    r"""\brequire\s*\(\s*['"](?:node:)?net['"]\s*\)""",
+    r"""\brequire\s*\(\s*['"](?:node:)?dgram['"]\s*\)""",
+    r"""\bfetch\s*\(""",
+    # Code execution
+    r"""\beval\s*\(""",
+    r"""\bnew\s+Function\s*\(""",
+    r"""\brequire\s*\(\s*['"](?:node:)?vm['"]\s*\)""",
+    # Process manipulation
+    r"""\bprocess\.exit\b""",
+    r"""\bprocess\.kill\b""",
+    # OS module (system info, potentially dangerous)
+    r"""\brequire\s*\(\s*['"](?:node:)?os['"]\s*\)""",
+    # fs subpaths (fs/promises, etc.)
+    r"""\brequire\s*\(\s*['"](?:node:)?fs/""",
+    # Template literal require
+    r"""\brequire\s*\(\s*`""",
+    # Dynamic import() (ESM)
+    r"""\bimport\s*\(""",
+    # Dynamic require (variable instead of string literal)
+    r"""\brequire\s*\(\s*[^'"\s)]""",
+]
+
+_JS_DANGEROUS_RE = [re.compile(p) for p in _JS_DANGEROUS_PATTERNS]
+
+
+def is_safe_inline_js(code_str):
+    """Check if inline Node.js code is a safe data transformation."""
+    for pattern in _JS_DANGEROUS_RE:
+        if pattern.search(code_str):
+            return False
+    return True
 
 
 def output(decision, reason=None):
@@ -192,15 +332,41 @@ def check_segment(segment):
         if rest and rest[0] == '-c':
             return False
 
-    # Deny interpreter inline execution flags (only before first positional arg)
+    # Inline execution flags — analyze code content if possible
     if cmd_name in INLINE_EXEC_FLAGS:
         dangerous = INLINE_EXEC_FLAGS[cmd_name]
-        for tok in rest:
+        exec_flag = None
+        code_str = None
+        for i, tok in enumerate(rest):
             if tok in dangerous:
-                return False
+                exec_flag = tok
+                # Code is the next token after the flag
+                if i + 1 < len(rest):
+                    code_str = rest[i + 1]
+                break
+            # Check for concatenated form: -c"code" or -e"code"
+            for flag in dangerous:
+                if tok.startswith(flag) and len(tok) > len(flag):
+                    exec_flag = flag
+                    code_str = tok[len(flag):]
+                    break
+            if exec_flag:
+                break
             # Stop at first positional argument (script filename)
             if not tok.startswith('-'):
                 break
+
+        if exec_flag and code_str is not None:
+            # We have inline code — analyze it for safety
+            if cmd_name in ('python', 'python3'):
+                return is_safe_inline_python(code_str)
+            elif cmd_name == 'node':
+                return is_safe_inline_js(code_str)
+            # Other interpreters (ruby, deno, bun) — no analyzer yet, deny
+            return False
+        elif exec_flag:
+            # Flag present but no code string found — deny
+            return False
 
     # Deny dangerous flags on specific commands
     if cmd_name in DANGEROUS_CMD_FLAGS:
