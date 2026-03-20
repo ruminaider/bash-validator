@@ -139,13 +139,49 @@ def get_top_rejection_patterns(entries, limit=5):
     return pattern_counts.most_common(limit)
 
 
+def get_rejection_reasons(entries):
+    """Count rejection reasons across all entries."""
+    reason_counts = Counter()
+    for entry in entries:
+        reason = entry.get("reason")
+        if reason:
+            reason_counts[reason] += 1
+    return reason_counts.most_common()
+
+
+# Actionable guidance for each rejection reason
+REASON_GUIDANCE = {
+    "command_substitution": (
+        "Commands using `$(...)` or backticks were rejected {count} times. "
+        "The validator cannot statically verify command substitution. "
+        "Alternatives: decompose into separate commands, use `git grep` "
+        "instead of `for file in $(git ls-tree ...) ; do ... done`, "
+        "or use built-in flags like `--jq` or `--format` to avoid pipes."
+    ),
+    "process_substitution": (
+        "Commands using `<(...)` or `>(...)` were rejected {count} times. "
+        "Use temporary files or pipes instead of process substitution."
+    ),
+    "heredoc": (
+        "Commands using `<<` heredocs were rejected {count} times. "
+        "Use `echo '...' | command` instead, or write content to a file first."
+    ),
+    "unsafe_segment": (
+        "Commands with unsafe segments were rejected {count} times. "
+        "Check that all commands in the pipeline are in the safe list, "
+        "inline code uses safe modules only, and no dangerous flags are present."
+    ),
+}
+
+
 def update_skill_guidance(entries):
     """Update the SKILL.md dynamic section with rejection-based guidance."""
     if not entries:
         return
 
     top_patterns = get_top_rejection_patterns(entries)
-    if not top_patterns:
+    reason_counts = get_rejection_reasons(entries)
+    if not top_patterns and not reason_counts:
         return
 
     lines = [
@@ -153,10 +189,24 @@ def update_skill_guidance(entries):
         "",
         "## Recently Rejected Patterns",
         "",
-        "The following command patterns have been frequently rejected by the",
-        "validator. Use the suggested alternatives instead:",
+        "The following patterns have been frequently rejected by the validator.",
+        "Use the suggested alternatives instead:",
         "",
     ]
+
+    # Reason-based guidance (most actionable)
+    if reason_counts:
+        for reason, count in reason_counts:
+            template = REASON_GUIDANCE.get(reason)
+            if template:
+                lines.append(f"- {template.format(count=count)}")
+
+        lines.append("")
+
+    # Pattern-based guidance
+    if top_patterns:
+        lines.append("**Top rejected patterns:**")
+        lines.append("")
 
     for pattern, count in top_patterns:
         parts = pattern.split()

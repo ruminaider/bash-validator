@@ -659,8 +659,19 @@ def strip_safe_subshells(cmd, _depth=0):
 
 def check_command(cmd, _depth=0):
     """Check if a full command string is safe."""
+    safe, _ = check_command_with_reason(cmd, _depth=_depth)
+    return safe
+
+
+def check_command_with_reason(cmd, _depth=0):
+    """Check if a full command string is safe, returning (bool, reason).
+
+    reason is None when safe, or a string describing why the command was
+    rejected (e.g., "command_substitution", "process_substitution",
+    "heredoc", "unsafe_segment").
+    """
     if _depth > 10:
-        return False
+        return False, "recursion_limit"
 
     # B0. Strip safe $(cat <<'DELIM'...DELIM) — multiline string literals
     cmd = strip_safe_cat_heredocs(cmd)
@@ -673,11 +684,11 @@ def check_command(cmd, _depth=0):
 
     # B. Pre-scan: reject constructs too complex to analyze
     if re.search(r'\$\(|`', cmd):
-        return False
+        return False, "command_substitution"
     if re.search(r'[<>]\(', cmd):
-        return False
+        return False, "process_substitution"
     if '<<' in cmd:
-        return False
+        return False, "heredoc"
 
     # C. Regex-based operator splitting (respects quoted strings)
     normalized = cmd.replace('\n', ' ; ')
@@ -695,9 +706,12 @@ def check_command(cmd, _depth=0):
     if remaining:
         segments.append(remaining)
     if not segments:
-        return False
+        return False, "empty_command"
 
-    return all(check_segment(s) for s in segments)
+    for s in segments:
+        if not check_segment(s):
+            return False, "unsafe_segment"
+    return True, None
 
 
 def _is_standalone_tier3(command):
@@ -772,7 +786,7 @@ def _is_standalone_tier3(command):
     return False
 
 
-def log_rejection(session_id, command):
+def log_rejection(session_id, command, reason=None):
     """Log a rejected command (tokenized) for pattern learning."""
     try:
         tokens = shlex.split(command)
@@ -787,6 +801,7 @@ def log_rejection(session_id, command):
         "sid": session_id[:8] if session_id else "?",
         "cmd": cmd_name,
         "subcmd": subcmd,
+        "reason": reason,
         "tokens": tokens[:6],
         "hash": hashlib.sha256(command.encode()).hexdigest()[:16],
     }
@@ -807,10 +822,10 @@ def main():
             with open(debug_log, "a") as f:
                 f.write(f"[{sid}] NO CMD\n")
             output("allow")
-        safe = check_command(command)
+        safe, reason = check_command_with_reason(command)
         if not safe:
             try:
-                log_rejection(sid, command)
+                log_rejection(sid, command, reason=reason)
             except Exception:
                 pass
         decision = "allow" if safe else "ask"

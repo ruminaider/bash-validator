@@ -2,6 +2,13 @@
 
 All notable changes to bash-validator are documented here.
 
+## [2.2.0] - 2026-03-20
+
+### Added
+
+- **Rejection reason tracking** — `check_command_with_reason()` returns why a command was rejected (command_substitution, process_substitution, heredoc, unsafe_segment). Reasons are stored in the rejection log and used by Layer 3 to generate actionable skill guidance.
+- Reason-based skill guidance: instead of just "for file was rejected 5 times", the skill now teaches "Commands using `$(...)` were rejected — use `git grep` instead of `for file in $(git ls-tree ...)`".
+
 ## [2.1.0] - 2026-03-20
 
 ### Fixed

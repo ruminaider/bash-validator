@@ -23,6 +23,7 @@ _validator_mod = importlib.util.module_from_spec(_validator_spec)
 _validator_spec.loader.exec_module(_validator_mod)
 
 log_rejection = _validator_mod.log_rejection
+check_command_with_reason = _validator_mod.check_command_with_reason
 
 # Import session-start.py
 _session_spec = importlib.util.spec_from_file_location(
@@ -37,8 +38,68 @@ analyze_patterns = _session_mod.analyze_patterns
 apply_proposals = _session_mod.apply_proposals
 update_skill_guidance = _session_mod.update_skill_guidance
 get_top_rejection_patterns = _session_mod.get_top_rejection_patterns
+get_rejection_reasons = _session_mod.get_rejection_reasons
 DYNAMIC_START = _session_mod.DYNAMIC_START
 DYNAMIC_END = _session_mod.DYNAMIC_END
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Rejection Reasons
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestRejectionReasons:
+    """Test that check_command_with_reason returns correct reasons."""
+
+    def test_command_substitution_reason(self):
+        safe, reason = check_command_with_reason("echo $(whoami)")
+        assert safe is False
+        assert reason == "command_substitution"
+
+    def test_backtick_substitution_reason(self):
+        safe, reason = check_command_with_reason("echo `whoami`")
+        assert safe is False
+        assert reason == "command_substitution"
+
+    def test_process_substitution_reason(self):
+        safe, reason = check_command_with_reason("diff <(sort a) <(sort b)")
+        assert safe is False
+        assert reason == "process_substitution"
+
+    def test_heredoc_reason(self):
+        safe, reason = check_command_with_reason("cat << EOF\nhello\nEOF")
+        assert safe is False
+        assert reason == "heredoc"
+
+    def test_unsafe_segment_reason(self):
+        safe, reason = check_command_with_reason("rm -rf /")
+        assert safe is False
+        assert reason == "unsafe_segment"
+
+    def test_safe_command_no_reason(self):
+        safe, reason = check_command_with_reason("ls -la")
+        assert safe is True
+        assert reason is None
+
+    def test_reason_in_log_entry(self, tmp_path, monkeypatch):
+        """Reason field should be present in rejection log entries."""
+        log_file = str(tmp_path / "rejections.jsonl")
+        monkeypatch.setattr(_validator_mod, "REJECTIONS_LOG", log_file)
+
+        log_rejection("sess1234", "echo $(whoami)", reason="command_substitution")
+
+        with open(log_file) as f:
+            entry = json.loads(f.readline())
+        assert entry["reason"] == "command_substitution"
+
+    def test_reason_used_in_skill_guidance(self):
+        """Entries with reasons should produce reason-based guidance."""
+        entries = [
+            {"cmd": "for", "subcmd": "file", "reason": "command_substitution"},
+            {"cmd": "for", "subcmd": "f", "reason": "command_substitution"},
+            {"cmd": "echo", "subcmd": None, "reason": "command_substitution"},
+        ]
+        reasons = get_rejection_reasons(entries)
+        assert reasons[0] == ("command_substitution", 3)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
