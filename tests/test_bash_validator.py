@@ -438,6 +438,32 @@ class TestTier1EnvPrefixes:
         assert check_command("env") is False
 
 
+class TestTier1Comments:
+    """Bash comments are no-ops and should be safe."""
+
+    def test_comment_line(self):
+        assert check_command("# this is a comment") is True
+
+    def test_comment_with_leading_whitespace(self):
+        assert check_command("  # indented comment") is True
+
+    def test_comment_in_compound_command(self):
+        """Comment lines between real commands should not break the chain."""
+        assert check_command("echo hello\n# a comment\necho world") is True
+
+    def test_comment_with_dangerous_words(self):
+        """Comments containing dangerous command names are still safe."""
+        assert check_command("# rm -rf / -- this is just a note") is True
+        assert check_command("# sudo apt-get install evil") is True
+
+    def test_real_world_comment_with_commands(self):
+        """The exact pattern that triggered this fix: comments + gh pipes."""
+        cmd = '''# Find specific lines in the diff
+echo "=== test ==="
+gh pr diff 3 | grep -n 'pattern' | head -10'''
+        assert check_command(cmd) is True
+
+
 class TestTier1SpecialParsing:
     """Edge cases in parsing — heredocs, subshells, escaped operators."""
 

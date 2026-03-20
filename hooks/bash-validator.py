@@ -310,6 +310,10 @@ def check_segment(segment):
     # Internal placeholders from pre-processing are already validated
     if segment.strip() in ('"__SUBSHELL__"', '"__HEREDOC__"'):
         return True
+    # Bash comments are no-ops — safe
+    stripped = segment.strip()
+    if stripped.startswith('#'):
+        return True
     try:
         tokens = shlex.split(segment)
     except ValueError:
