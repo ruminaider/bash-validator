@@ -149,7 +149,8 @@ def get_rejection_reasons(entries):
     return reason_counts.most_common()
 
 
-# Actionable guidance for each rejection reason
+# Actionable guidance for each rejection reason.
+# Reasons starting with "inline_python:" are grouped by prefix.
 REASON_GUIDANCE = {
     "command_substitution": (
         "Commands using `$(...)` or backticks were rejected {count} times. "
@@ -172,6 +173,59 @@ REASON_GUIDANCE = {
         "inline code uses safe modules only, and no dangerous flags are present."
     ),
 }
+
+# Guidance for inline_python:* detail reasons
+INLINE_PYTHON_GUIDANCE = {
+    "dangerous_builtin:open": (
+        "Inline Python using `open()` was rejected {count} times. "
+        "`open()` can read/write arbitrary files. Alternatives: "
+        "use `python3 -m py_compile` for syntax checking, "
+        "`python3 -m json.tool` for JSON formatting, "
+        "or write a script file instead of `-c`."
+    ),
+    "dangerous_builtin:exec": (
+        "Inline Python using `exec()` was rejected {count} times. "
+        "`exec()` runs arbitrary code. Write a script file instead."
+    ),
+    "dangerous_builtin:eval": (
+        "Inline Python using `eval()` was rejected {count} times. "
+        "`eval()` evaluates arbitrary expressions. Write a script file instead."
+    ),
+    "unsafe_module:os": (
+        "Inline Python importing `os` was rejected {count} times. "
+        "The `os` module provides filesystem and process access. "
+        "For path operations, use `python3 -c` with only safe modules "
+        "(json, sys, re, collections). For file operations, write a script file."
+    ),
+    "unsafe_module:subprocess": (
+        "Inline Python importing `subprocess` was rejected {count} times. "
+        "Run commands directly in bash instead of via Python subprocess."
+    ),
+    "unsafe_module:shutil": (
+        "Inline Python importing `shutil` was rejected {count} times. "
+        "Use shell commands (`cp`, `mv`, `rm`) directly instead."
+    ),
+}
+
+
+def _get_reason_guidance(reason, count):
+    """Get guidance for a rejection reason, including inline_python details."""
+    # Exact match first
+    if reason in REASON_GUIDANCE:
+        return REASON_GUIDANCE[reason].format(count=count)
+
+    # inline_python:detail — check detail-specific guidance
+    if reason.startswith("inline_python:"):
+        detail = reason[len("inline_python:"):]
+        if detail in INLINE_PYTHON_GUIDANCE:
+            return INLINE_PYTHON_GUIDANCE[detail].format(count=count)
+        # Generic inline python guidance for unknown details
+        return (
+            f"Inline Python code was rejected {count} times "
+            f"(reason: `{detail}`). Write a script file instead of `python3 -c`."
+        )
+
+    return None
 
 
 def update_skill_guidance(entries):
@@ -197,9 +251,9 @@ def update_skill_guidance(entries):
     # Reason-based guidance (most actionable)
     if reason_counts:
         for reason, count in reason_counts:
-            template = REASON_GUIDANCE.get(reason)
-            if template:
-                lines.append(f"- {template.format(count=count)}")
+            guidance = _get_reason_guidance(reason, count)
+            if guidance:
+                lines.append(f"- {guidance}")
 
         lines.append("")
 

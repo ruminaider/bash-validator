@@ -62,7 +62,27 @@ jq -r '.author.login // "?"'
 | `bash -c "cmd"` | `cmd` | Run the command directly |
 | `$( subcommand )` | Split into separate Bash calls | Command substitution is rejected |
 
-## When inline Python is the right tool
+## Safe inline Python (auto-approves with AST analysis)
+
+The validator parses `python3 -c` code via AST analysis. Inline code that only uses safe modules (json, sys, re, csv, collections, datetime, etc.) and avoids dangerous builtins auto-approves:
+
+```bash
+# Auto-approves — safe modules only, no open/exec/eval
+gh api repos/owner/repo | python3 -c "import json, sys; print(json.dumps(json.load(sys.stdin), indent=2))"
+```
+
+Code that uses `open()`, `os`, `subprocess`, `exec`, `eval`, or other dangerous constructs still prompts.
+
+## Common alternatives to dangerous inline Python
+
+| Instead of | Use | Why |
+|-----------|-----|-----|
+| `python3 -c "open(f).read()..."` for syntax checking | `python3 -m py_compile file.py` | Module invocation, no `-c`, auto-approves |
+| `python3 -c "import json; ..."` for JSON formatting | `jq` or `python3 -m json.tool` | Pure JSON tools, auto-approve |
+| `for f in $(git ls-tree ...) ; do ... done` | `git grep -l 'pattern' branch -- '*.py'` | No command substitution, auto-approves |
+| `python3 -c "import os; ..."` for file ops | `python3 script.py` | Script files auto-approve |
+
+## When inline Python should prompt
 
 Use `python3 -c` when you genuinely need:
 - File I/O (reading/writing files during processing)

@@ -28,7 +28,10 @@ _spec.loader.exec_module(_mod)
 
 check_command = _mod.check_command
 check_segment = _mod.check_segment
-is_safe_inline_python = _mod.is_safe_inline_python
+_is_safe_inline_python_raw = _mod.is_safe_inline_python
+def is_safe_inline_python(code):
+    safe, _reason = _is_safe_inline_python_raw(code)
+    return safe
 is_safe_inline_js = _mod.is_safe_inline_js
 SAFE_COMMANDS = _mod.SAFE_COMMANDS
 SAFE_GIT_SUBCOMMANDS = _mod.SAFE_GIT_SUBCOMMANDS

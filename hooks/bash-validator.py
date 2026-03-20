@@ -192,53 +192,53 @@ DANGEROUS_BUILTINS = {
 def is_safe_inline_python(code_str):
     """Analyze a Python code string via AST to decide if it's safe.
 
-    Returns True if the code only uses safe modules, no dangerous builtins,
-    no file I/O, no network, no code execution. Returns False on any
-    SyntaxError or if any dangerous construct is found.
+    Returns (True, None) if safe, or (False, reason_string) if dangerous.
+    The reason_string describes exactly what was flagged (e.g.,
+    "dangerous_builtin:open", "unsafe_module:os", "dunder_access").
     """
     try:
         tree = ast.parse(code_str)
     except SyntaxError:
-        return False
+        return False, "syntax_error"
 
     for node in ast.walk(tree):
         # Check dunder name access (__builtins__, __import__, etc.)
         if isinstance(node, ast.Name):
             if node.id.startswith("__") and node.id.endswith("__"):
-                return False
+                return False, f"dunder_name:{node.id}"
 
         # Check imports
         if isinstance(node, ast.Import):
             for alias in node.names:
                 top_module = alias.name.split('.')[0]
                 if top_module not in SAFE_PYTHON_MODULES:
-                    return False
+                    return False, f"unsafe_module:{top_module}"
 
         elif isinstance(node, ast.ImportFrom):
             if node.module is None:
-                return False
+                return False, "relative_import"
             top_module = node.module.split('.')[0]
             if top_module not in SAFE_PYTHON_MODULES:
-                return False
+                return False, f"unsafe_module:{top_module}"
 
         # Check dangerous builtin calls
         elif isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Name) and func.id in DANGEROUS_BUILTINS:
-                return False
+                return False, f"dangerous_builtin:{func.id}"
 
         # Check attribute access
         elif isinstance(node, ast.Attribute):
             # sys.exit, sys.modules, etc. — only allow safe sys attrs
             if isinstance(node.value, ast.Name) and node.value.id == "sys":
                 if node.attr not in SAFE_SYS_ATTRS:
-                    return False
+                    return False, f"unsafe_sys_attr:{node.attr}"
 
             # Dunder attribute access (sandbox escape patterns)
             if node.attr.startswith("__") and node.attr.endswith("__"):
-                return False
+                return False, f"dunder_attr:{node.attr}"
 
-    return True
+    return True, None
 
 
 # --- D. Node.js regex analyzer (for inline node -e) ---
@@ -389,7 +389,8 @@ def check_segment(segment):
         if exec_flag and code_str is not None:
             # We have inline code — analyze it for safety
             if cmd_name in ('python', 'python3'):
-                return is_safe_inline_python(code_str)
+                safe, _detail = is_safe_inline_python(code_str)
+                return safe
             elif cmd_name == 'node':
                 return is_safe_inline_js(code_str)
             # Other interpreters (ruby, deno, bun) — no analyzer yet, deny
@@ -710,8 +711,55 @@ def check_command_with_reason(cmd, _depth=0):
 
     for s in segments:
         if not check_segment(s):
-            return False, "unsafe_segment"
+            # Try to extract a more specific reason for inline code rejections
+            reason = _get_segment_rejection_detail(s)
+            return False, reason
     return True, None
+
+
+def _get_segment_rejection_detail(segment):
+    """Get a specific rejection reason for a failed segment.
+
+    Attempts to identify inline code issues (dangerous builtins, unsafe
+    modules) for more actionable skill guidance. Falls back to
+    "unsafe_segment" for non-inline rejections.
+    """
+    stripped = segment.strip()
+    try:
+        tokens = shlex.split(stripped)
+    except ValueError:
+        return "unsafe_segment"
+    if not tokens:
+        return "unsafe_segment"
+
+    # Find the command name (skip env/command prefixes and VAR=val)
+    idx = 0
+    while idx < len(tokens):
+        if tokens[idx] in ('env', 'command'):
+            idx += 1
+        elif '=' in tokens[idx] and not tokens[idx].startswith('-'):
+            idx += 1
+        else:
+            break
+    if idx >= len(tokens):
+        return "unsafe_segment"
+
+    cmd_name = os.path.basename(tokens[idx])
+    rest = tokens[idx + 1:]
+
+    # Check for inline Python code with AST detail
+    if cmd_name in ('python', 'python3') and rest:
+        exec_flags = INLINE_EXEC_FLAGS.get(cmd_name, set())
+        for i, tok in enumerate(rest):
+            if tok in exec_flags and i + 1 < len(rest):
+                _safe, detail = is_safe_inline_python(rest[i + 1])
+                if detail:
+                    return f"inline_python:{detail}"
+                break
+            if not tok.startswith('-'):
+                break
+
+    return "unsafe_segment"
 
 
 def _is_standalone_tier3(command):

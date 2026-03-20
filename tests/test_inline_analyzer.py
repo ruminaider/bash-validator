@@ -19,7 +19,10 @@ _spec = importlib.util.spec_from_file_location(
 _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 
-is_safe_inline_python = _mod.is_safe_inline_python
+_is_safe_inline_python_raw = _mod.is_safe_inline_python
+def is_safe_inline_python(code):
+    safe, _reason = _is_safe_inline_python_raw(code)
+    return safe
 is_safe_inline_js = _mod.is_safe_inline_js
 check_command = _mod.check_command
 

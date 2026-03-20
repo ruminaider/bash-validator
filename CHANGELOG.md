@@ -2,6 +2,14 @@
 
 All notable changes to bash-validator are documented here.
 
+## [2.3.0] - 2026-03-20
+
+### Added
+
+- **AST-specific rejection details** — `is_safe_inline_python` now returns exactly what was flagged (e.g., `dangerous_builtin:open`, `unsafe_module:os`, `dunder_name:__builtins__`). These details flow through the rejection log and into Layer 3 skill guidance.
+- **Inline Python guidance in skill** — the `validator-friendly-commands` skill now teaches alternatives: `python3 -m py_compile` for syntax checking, `python3 -m json.tool` for JSON formatting, `git grep` instead of `for..$(...)..done` loops.
+- **Detail-specific skill guidance** — Layer 3 generates targeted advice like "Inline Python using `open()` was rejected N times — use `python3 -m py_compile` for syntax checking" instead of generic "unsafe segment" messages.
+
 ## [2.2.0] - 2026-03-20
 
 ### Added
