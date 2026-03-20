@@ -2,6 +2,19 @@
 
 All notable changes to bash-validator are documented here.
 
+## [2.1.0] - 2026-03-20
+
+### Fixed
+
+- Bash comment lines (`# ...`) now auto-approve instead of triggering a prompt. Previously, `#` was tokenized as a command name not in the safe list, causing multi-line commands with comments to fail.
+
+### Added
+
+- `sed -i` / `--in-place` protection (moved from 2.0.0 release notes — was part of that release but worth highlighting).
+- Monitoring system: `scripts/monitor.py` health check script and `/validator-monitor` skill.
+- SECURITY.md with vulnerability reporting process and threat model.
+- CHANGELOG.md, GitHub topics, updated repo description.
+
 ## [2.0.0] - 2026-03-19
 
 ### Added
