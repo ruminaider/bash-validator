@@ -734,6 +734,19 @@ class TestDockerSubcommands:
         "docker diff mycontainer",
         "docker system df",
         "docker",
+        # docker compose read-only sub-subcommands
+        "docker compose ps",
+        "docker compose -p my-project ps",
+        "docker compose --project-name my-project ps",
+        "docker compose -f docker-compose.yml ps",
+        "docker compose ls",
+        "docker compose logs",
+        "docker compose logs -f web",
+        "docker compose top",
+        "docker compose images",
+        "docker compose config",
+        "docker compose version",
+        "docker compose",
     ])
     def test_docker_safe_subcommands_allowed(self, cmd):
         assert check_command(cmd) is True
@@ -750,6 +763,12 @@ class TestDockerSubcommands:
         "docker push myimage",
         "docker pull ubuntu",
         "docker compose up",
+        "docker compose up -d",
+        "docker compose down",
+        "docker compose rm",
+        "docker compose build",
+        "docker compose restart",
+        "docker compose -p myproj up",
         "docker create ubuntu",
         "docker start mycontainer",
         "docker restart mycontainer",

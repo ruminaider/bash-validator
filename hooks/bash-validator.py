@@ -107,6 +107,13 @@ SAFE_DOCKER_SUBCOMMANDS = {
     "inspect", "ps", "images", "logs", "stats", "top", "port",
     "version", "info", "network", "volume", "container", "image",
     "system", "context", "manifest", "trust", "history", "diff",
+    "compose",
+}
+
+# docker compose sub-subcommands that are read-only
+SAFE_DOCKER_COMPOSE_SUBCOMMANDS = {
+    "ps", "ls", "top", "logs", "images", "config", "version",
+    "events", "port", "alpha",
 }
 
 # --- Learned rules (auto-updated by session-start hook) ---
@@ -453,7 +460,24 @@ def check_segment(segment):
         if not rest:
             return True  # bare 'docker' shows help
         subcmd = rest[0]
-        return subcmd in SAFE_DOCKER_SUBCOMMANDS
+        if subcmd not in SAFE_DOCKER_SUBCOMMANDS:
+            return False
+        # docker compose needs sub-subcommand check
+        if subcmd == 'compose':
+            # Skip flags between 'compose' and the sub-subcommand
+            ci = 1
+            while ci < len(rest) and rest[ci].startswith('-'):
+                # Skip flags that take a value (-f, -p, --project-name, etc.)
+                if rest[ci] in ('-f', '--file', '-p', '--project-name',
+                                '--project-directory', '--profile', '--env-file',
+                                '--ansi', '--progress', '--parallel'):
+                    ci += 2
+                else:
+                    ci += 1
+            if ci >= len(rest):
+                return True  # bare 'docker compose' shows help
+            return rest[ci] in SAFE_DOCKER_COMPOSE_SUBCOMMANDS
+        return True
 
     # --- macOS defaults subcommand handling ---
 
