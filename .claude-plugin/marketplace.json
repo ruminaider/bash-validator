@@ -1,12 +1,10 @@
 {
   "name": "bash-validator-marketplace",
+  "description": "Bash command safety validator with adaptive learning",
+  "lastUpdated": "2026-03-20",
   "owner": {
     "name": "Albert Gwo",
     "url": "https://github.com/ruminaider"
-  },
-  "metadata": {
-    "description": "Bash command safety validator plugin",
-    "version": "2.0.0"
   },
   "plugins": [
     {
