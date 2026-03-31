@@ -55,9 +55,19 @@ class TestEscalationStructural:
         assert decision == "ask"
         assert "rejected" in guidance.lower() and "time" in guidance.lower()
 
-    def test_fourth_rejection_returns_deny(self, tmp_path):
+    def test_third_rejection_still_asks(self, tmp_path):
         state = _state_mod.load_session_state("s1", state_dir=str(tmp_path))
-        for i in range(4):
+        for i in range(2):
+            _state_mod.record_rejection(state, "node -e", "inline_exec", "msg", f"a{i}")
+        decision, guidance = build_escalation_response(
+            state, "node -e", "inline_exec", "agent1",
+            _guidance_mod.STATIC_GUIDANCE
+        )
+        assert decision == "ask"
+
+    def test_deny_after_three_prior_rejections(self, tmp_path):
+        state = _state_mod.load_session_state("s1", state_dir=str(tmp_path))
+        for i in range(3):
             _state_mod.record_rejection(state, "node -e", "inline_exec", "msg", f"a{i}")
         decision, guidance = build_escalation_response(
             state, "node -e", "inline_exec", "agent1",

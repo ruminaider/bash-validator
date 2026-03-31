@@ -41,6 +41,7 @@ class TestFlushSessionStats:
         assert line["total_approvals"] == 1
         assert "node -e" in line["patterns"]
         assert "git push" in line["patterns"]
+        assert "escalations_to_deny" in line
 
     def test_appends_to_existing_log(self, tmp_path):
         stats_path = str(tmp_path / "session-stats.jsonl")

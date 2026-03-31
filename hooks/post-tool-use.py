@@ -16,11 +16,21 @@ import session_state as _ss
 
 def resolve_pending_rejections(state, tool_error):
     """Resolve the most recent unresolved rejection."""
+    # Prefer the explicitly tracked most-recent pattern over insertion-order iteration.
+    last = state.get("last_rejected_pattern")
+    if last:
+        data = state.get("patterns", {}).get(last, {})
+        pending = data.get("rejections", 0) - data.get("approvals", 0) - data.get("denials", 0)
+        if pending > 0:
+            _ss.record_resolution(state, last, approved=not tool_error)
+            return
+
+    # Fallback: iterate for state files that predate the last_rejected_pattern field.
     for pattern_key, data in state.get("patterns", {}).items():
         pending = data["rejections"] - data["approvals"] - data["denials"]
         if pending > 0:
             _ss.record_resolution(state, pattern_key, approved=not tool_error)
-            return  # resolve one at a time (most recent)
+            return  # resolve one at a time
 
 
 def main():

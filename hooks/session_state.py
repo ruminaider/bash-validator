@@ -30,11 +30,18 @@ def load_session_state(sid, state_dir=None):
             "started": datetime.now(timezone.utc).isoformat(),
             "patterns": {},
             "agents_briefed": [],
+            "last_rejected_pattern": None,
         }
 
 
 def save_session_state(sid, state, state_dir=None):
-    """Atomically write session state (write to temp, then rename)."""
+    """Atomically write session state (write to temp, then rename).
+
+    Note: This prevents partial writes but not lost updates. Two concurrent
+    callers can each load, modify, and save, with the last writer winning.
+    This is tolerable because escalation counts are advisory (not safety-critical)
+    and hooks rarely execute concurrently for the same session.
+    """
     path = _state_path(sid, state_dir)
     dir_path = os.path.dirname(path)
     fd, tmp_path = tempfile.mkstemp(dir=dir_path, suffix=".tmp")
@@ -64,6 +71,7 @@ def record_rejection(state, pattern_key, reason, guidance, agent_id):
     p["last_guidance"] = guidance
     if agent_key not in p["agents"]:
         p["agents"].append(agent_key)
+    state["last_rejected_pattern"] = pattern_key
 
 
 def record_resolution(state, pattern_key, approved):

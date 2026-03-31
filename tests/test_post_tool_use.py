@@ -47,3 +47,12 @@ class TestResolveRejections:
         # rejections=1, approvals=1: no pending
         resolve_pending_rejections(state, tool_error=False)
         assert state["patterns"]["git push"]["approvals"] == 1  # unchanged
+
+    def test_resolves_most_recent_pattern_not_oldest(self, tmp_path):
+        state = _state_mod.load_session_state("s1", state_dir=str(tmp_path))
+        _state_mod.record_rejection(state, "node -e", "inline_exec", "msg", "a1")
+        _state_mod.record_rejection(state, "python3 -c", "inline_exec", "msg", "a1")
+        # Both pending; should resolve python3 -c (most recent), not node -e
+        resolve_pending_rejections(state, tool_error=False)
+        assert state["patterns"]["python3 -c"]["approvals"] == 1
+        assert state["patterns"]["node -e"]["approvals"] == 0
