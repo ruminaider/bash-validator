@@ -14,6 +14,10 @@ import sys
 from collections import Counter
 from datetime import datetime, timezone
 
+sys.path.insert(0, os.path.dirname(__file__))
+import session_state as _ss
+import guidance_map as _gm
+
 PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT", os.path.dirname(os.path.dirname(__file__)))
 REJECTIONS_LOG = os.path.expanduser("~/.config/bash-validator/rejections.jsonl")
 LEARNED_RULES = os.path.expanduser("~/.config/bash-validator/learned-rules.json")
@@ -311,6 +315,18 @@ def main():
         "safe_commands": [], "git_subcommands": [],
         "docker_subcommands": [],
     })
+
+    # Generate guidance map for PreToolUse hook
+    try:
+        _gm.generate_guidance_map()
+    except Exception:
+        pass
+
+    # Clean up stale session state files
+    try:
+        _ss.cleanup_stale_sessions()
+    except Exception:
+        pass
 
     entries = load_rejections()
     if not entries:
