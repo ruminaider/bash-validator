@@ -18,6 +18,10 @@ import shlex
 import sys
 from datetime import datetime, timezone
 
+sys.path.insert(0, os.path.dirname(__file__))
+import session_state as _ss
+import guidance_map as _gm
+
 # --- A. Whitelist ---
 
 SAFE_COMMANDS = {
@@ -883,28 +887,109 @@ def log_rejection(session_id, command, reason=None):
         f.write(json.dumps(entry) + "\n")
 
 
+# --- Session-aware escalation ---
+
+_GUIDANCE_MAP = _gm.load_guidance_map()
+
+PROACTIVE_BRIEFING = "Bash validator rules: " + ". ".join(_gm.PROACTIVE_RULES) + "."
+
+
+def build_escalation_response(state, pattern_key, reason, agent_id, gmap):
+    """Determine escalation decision and guidance for a rejection.
+
+    Returns (decision, guidance) where:
+    - decision is "ask" or "deny"
+    - guidance is a string for additionalContext, or None for safety gates
+    """
+    if not _gm.is_structural_reason(reason):
+        return "ask", None
+
+    base_guidance = _gm.lookup_guidance(gmap, reason)
+    if not base_guidance:
+        return "ask", None
+
+    count = state.get("patterns", {}).get(pattern_key, {}).get("rejections", 0)
+
+    if count == 0:
+        return "ask", base_guidance
+    elif count <= 2:
+        return "ask", (
+            f"This pattern ({pattern_key}) has been rejected "
+            f"{count} time(s) this session. {base_guidance}"
+        )
+    else:
+        return "deny", (
+            f"This pattern ({pattern_key}) has been rejected "
+            f"{count} times this session and will not be approved. "
+            f"{base_guidance} Please continue with your task using "
+            f"the suggested alternative."
+        )
+
+
 def main():
     debug_log = "/tmp/bash-validator-debug.log"
     try:
         raw = sys.stdin.read()
         hook_input = json.loads(raw)
-        sid = hook_input.get("session_id", "?")[:8]
+        sid = hook_input.get("session_id", "?")
+        agent_id = hook_input.get("agent_id")
         command = hook_input.get("tool_input", {}).get("command", "")
         if not command:
             with open(debug_log, "a") as f:
-                f.write(f"[{sid}] NO CMD\n")
+                f.write(f"[{sid[:8]}] NO CMD\n")
             output("allow")
+
         safe, reason = check_command_with_reason(command)
-        if not safe:
+
+        # Load session state
+        state = _ss.load_session_state(sid)
+        additional_context = None
+
+        if safe:
+            # Proactive first-call briefing for new agents
+            if not _ss.is_agent_briefed(state, agent_id):
+                additional_context = PROACTIVE_BRIEFING
+                _ss.mark_agent_briefed(state, agent_id)
+                _ss.save_session_state(sid, state)
+            decision = "allow"
+            out_reason = None
+        else:
+            # Log rejection
+            pattern_key = _ss.extract_pattern_key(command, reason)
             try:
-                log_rejection(sid, command, reason=reason)
+                log_rejection(sid[:8], command, reason=reason)
             except Exception:
                 pass
-        decision = "allow" if safe else "ask"
-        reason = None if safe else "Requires user approval"
+
+            # Determine escalation
+            decision, guidance = build_escalation_response(
+                state, pattern_key, reason, agent_id, _GUIDANCE_MAP
+            )
+
+            # Record rejection and save state
+            _ss.record_rejection(state, pattern_key, reason, guidance, agent_id)
+            _ss.save_session_state(sid, state)
+
+            additional_context = guidance
+            out_reason = "Requires user approval" if decision == "ask" else guidance
+
         with open(debug_log, "a") as f:
-            f.write(f"[{sid}] {decision}: {command[:120]}\n")
-        output(decision, reason)
+            f.write(f"[{sid[:8]}] {decision}: {command[:120]}\n")
+
+        # Build output with additionalContext
+        payload = {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": decision,
+            }
+        }
+        if out_reason:
+            payload["hookSpecificOutput"]["permissionDecisionReason"] = out_reason
+        if additional_context:
+            payload["hookSpecificOutput"]["additionalContext"] = additional_context
+        print(json.dumps(payload))
+        sys.exit(0)
+
     except Exception as e:
         with open(debug_log, "a") as f:
             f.write(f"[??] EXCEPTION: {e}\n")
