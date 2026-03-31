@@ -131,3 +131,16 @@ The SessionStart hook updates the `validator-friendly-commands` skill with
 recently rejected patterns, so subagents learn to generate better commands.
 Updates are written between `<!-- DYNAMIC:START -->` and `<!-- DYNAMIC:END -->`
 markers in the skill file.
+
+## Session Intelligence
+
+The validator uses six hooks to provide session-aware guidance:
+
+- **SessionStart**: Generates the guidance-map and cleans up stale session state
+- **SubagentStart**: Briefs every subagent with validator rules and session-specific warnings
+- **PreToolUse:Bash**: Enforces rules with escalating `additionalContext` guidance
+- **PostToolUse:Bash**: Records user approval/denial outcomes
+- **PreCompact**: Preserves validator rules across context compaction
+- **SessionEnd**: Flushes session stats for long-term analysis
+
+Session state is shared across all agents (main + subagents) via `/tmp/bash-validator-session-{sid}.json`. Escalation applies only to structural reasons (heredoc, inline code, command substitution), not safety gates (destructive commands).
