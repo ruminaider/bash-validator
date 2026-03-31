@@ -105,4 +105,29 @@ jq handles more than you might expect:
 - Math: `map(.count) | add`
 
 <!-- DYNAMIC:START -->
+
+## Recently Rejected Patterns
+
+The following patterns have been frequently rejected by the validator.
+Use the suggested alternatives instead:
+
+- Commands with unsafe segments were rejected 294 times. Check that all commands in the pipeline are in the safe list, inline code uses safe modules only, and no dangerous flags are present.
+- Commands using `$(...)` or backticks were rejected 56 times. The validator cannot statically verify command substitution. Alternatives: decompose into separate commands, use `git grep` instead of `for file in $(git ls-tree ...) ; do ... done`, or use built-in flags like `--jq` or `--format` to avoid pipes.
+- Inline Python code was rejected 29 times (reason: `syntax_error`). Write a script file instead of `python3 -c`.
+- Commands using `<<` heredocs were rejected 20 times. Use `echo '...' | command` instead, or write content to a file first.
+- Inline Python code was rejected 9 times (reason: `unsafe_module:mcp`). Write a script file instead of `python3 -c`.
+- Commands using `<(...)` or `>(...)` were rejected 4 times. Use temporary files or pipes instead of process substitution.
+- Inline Python code was rejected 4 times (reason: `unsafe_module:importlib`). Write a script file instead of `python3 -c`.
+- Inline Python code was rejected 2 times (reason: `unsafe_module:starlette`). Write a script file instead of `python3 -c`.
+- Inline Python code was rejected 1 times (reason: `unsafe_module:sanitized_db_mcp`). Write a script file instead of `python3 -c`.
+- Inline Python code was rejected 1 times (reason: `unsafe_module:inspect`). Write a script file instead of `python3 -c`.
+
+**Top rejected patterns:**
+
+- `git push` was rejected 80 times - this subcommand requires user approval
+- `git checkout` was rejected 59 times - this subcommand requires user approval
+- `gh api` was rejected 30 times
+- `node -e` was rejected 26 times - use `jq` for JSON processing or write a script file
+- `python3 -c` was rejected 25 times - use `jq` for JSON processing or write a script file
+
 <!-- DYNAMIC:END -->
