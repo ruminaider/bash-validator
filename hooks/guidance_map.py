@@ -10,6 +10,9 @@ import os
 
 GUIDANCE_MAP_PATH = os.path.expanduser("~/.config/bash-validator/guidance-map.json")
 
+# Escalation deny threshold: reject with "deny" after this many prior rejections
+DENY_THRESHOLD = 3
+
 # Static base mapping. Safety gates have None values.
 STATIC_GUIDANCE = {
     "command_substitution": (
@@ -70,11 +73,6 @@ PROACTIVE_RULES = [
     "Avoid heredocs (<<); use echo or the Write tool instead",
 ]
 
-# Structural reason prefixes that trigger escalation
-_STRUCTURAL_PREFIXES = (
-    "command_substitution", "process_substitution", "heredoc",
-    "inline_exec", "inline_python:",
-)
 _STRUCTURAL_EXACT = {
     "command_substitution", "process_substitution", "heredoc", "inline_exec",
 }
@@ -86,7 +84,7 @@ def is_structural_reason(reason):
         return False
     if reason in _STRUCTURAL_EXACT:
         return True
-    return any(reason.startswith(p) for p in _STRUCTURAL_PREFIXES)
+    return reason.startswith("inline_python:")
 
 
 def lookup_guidance(gmap, reason):

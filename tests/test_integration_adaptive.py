@@ -83,7 +83,7 @@ class TestFullSessionLifecycle:
         # 4. Subagent A hits node -e (first rejection)
         pattern = "node -e"
         decision, guidance = build_escalation_response(
-            state, pattern, "inline_exec", "agentA", gmap
+            state, pattern, "inline_exec", gmap
         )
         assert decision == "ask"
         assert guidance is not None
@@ -106,7 +106,7 @@ class TestFullSessionLifecycle:
 
         # 8. Subagent B tries node -e: count is 4, gets deny
         decision, guidance = build_escalation_response(
-            state, pattern, "inline_exec", "agentB", gmap
+            state, pattern, "inline_exec", gmap
         )
         assert decision == "deny"
         assert "continue" in guidance.lower()
@@ -115,7 +115,7 @@ class TestFullSessionLifecycle:
         for i in range(10):
             _state_mod.record_rejection(state, "rm", "unsafe_segment", None, "agentA")
         decision, guidance = build_escalation_response(
-            state, "rm", "unsafe_segment", "agentA", gmap
+            state, "rm", "unsafe_segment", gmap
         )
         assert decision == "ask"
         assert guidance is None

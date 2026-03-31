@@ -37,7 +37,7 @@ class TestEscalationStructural:
     def test_first_rejection_returns_ask_with_guidance(self, tmp_path):
         state = _state_mod.load_session_state("s1", state_dir=str(tmp_path))
         decision, guidance = build_escalation_response(
-            state, "node -e", "inline_exec", "agent1",
+            state, "node -e", "inline_exec",
             _guidance_mod.STATIC_GUIDANCE
         )
         assert decision == "ask"
@@ -49,7 +49,7 @@ class TestEscalationStructural:
         _state_mod.record_rejection(state, "node -e", "inline_exec", "msg", "a1")
         _state_mod.record_rejection(state, "node -e", "inline_exec", "msg", "a1")
         decision, guidance = build_escalation_response(
-            state, "node -e", "inline_exec", "agent1",
+            state, "node -e", "inline_exec",
             _guidance_mod.STATIC_GUIDANCE
         )
         assert decision == "ask"
@@ -60,7 +60,7 @@ class TestEscalationStructural:
         for i in range(2):
             _state_mod.record_rejection(state, "node -e", "inline_exec", "msg", f"a{i}")
         decision, guidance = build_escalation_response(
-            state, "node -e", "inline_exec", "agent1",
+            state, "node -e", "inline_exec",
             _guidance_mod.STATIC_GUIDANCE
         )
         assert decision == "ask"
@@ -70,7 +70,7 @@ class TestEscalationStructural:
         for i in range(3):
             _state_mod.record_rejection(state, "node -e", "inline_exec", "msg", f"a{i}")
         decision, guidance = build_escalation_response(
-            state, "node -e", "inline_exec", "agent1",
+            state, "node -e", "inline_exec",
             _guidance_mod.STATIC_GUIDANCE
         )
         assert decision == "deny"
@@ -85,7 +85,7 @@ class TestEscalationSafetyGate:
         for i in range(10):
             _state_mod.record_rejection(state, "rm", "unsafe_segment", None, f"a{i}")
         decision, guidance = build_escalation_response(
-            state, "rm", "unsafe_segment", "agent1",
+            state, "rm", "unsafe_segment",
             _guidance_mod.STATIC_GUIDANCE
         )
         assert decision == "ask"

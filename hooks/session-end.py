@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(__file__))
 import session_state as _ss
-import guidance_map as _gm
+import guidance_map as _gm  # for DENY_THRESHOLD
 
 STATS_LOG = os.path.expanduser("~/.config/bash-validator/session-stats.jsonl")
 REJECTIONS_LOG = os.path.expanduser("~/.config/bash-validator/rejections.jsonl")
@@ -33,11 +33,9 @@ def flush_session_stats(state, stats_path=None):
     for p in patterns.values():
         agents.update(p.get("agents", []))
 
-    # Count patterns that hit the deny threshold (structural reasons with high rejection count).
-    # The deny threshold in build_escalation_response is count > 2 (i.e., 3+ prior rejections).
     escalations_to_deny = sum(
         1 for p in patterns.values()
-        if p.get("rejections", 0) > 3  # matches the deny threshold in build_escalation_response
+        if p.get("rejections", 0) >= _gm.DENY_THRESHOLD
     )
 
     # Compute session duration

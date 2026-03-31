@@ -54,7 +54,6 @@ def main():
     except Exception:
         pass
 
-    # PostToolUse hooks should not output hookSpecificOutput for permission
     print(json.dumps({}))
     sys.exit(0)
 

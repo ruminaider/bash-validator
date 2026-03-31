@@ -303,7 +303,7 @@ def is_safe_inline_js(code_str):
     return True
 
 
-def output(decision, reason=None):
+def output(decision, reason=None, additional_context=None):
     payload = {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
@@ -312,6 +312,8 @@ def output(decision, reason=None):
     }
     if reason:
         payload["hookSpecificOutput"]["permissionDecisionReason"] = reason
+    if additional_context:
+        payload["hookSpecificOutput"]["additionalContext"] = additional_context
     print(json.dumps(payload))
     sys.exit(0)
 
@@ -889,12 +891,10 @@ def log_rejection(session_id, command, reason=None):
 
 # --- Session-aware escalation ---
 
-_GUIDANCE_MAP = _gm.load_guidance_map()
-
 PROACTIVE_BRIEFING = "Bash validator rules: " + ". ".join(_gm.PROACTIVE_RULES) + "."
 
 
-def build_escalation_response(state, pattern_key, reason, agent_id, gmap):
+def build_escalation_response(state, pattern_key, reason, gmap):
     """Determine escalation decision and guidance for a rejection.
 
     Returns (decision, guidance) where:
@@ -912,7 +912,7 @@ def build_escalation_response(state, pattern_key, reason, agent_id, gmap):
 
     if count == 0:
         return "ask", base_guidance
-    elif count <= 2:
+    elif count < _gm.DENY_THRESHOLD:
         return "ask", (
             f"This pattern ({pattern_key}) has been rejected "
             f"{count} time(s) this session. {base_guidance}"
@@ -941,54 +941,38 @@ def main():
 
         safe, reason = check_command_with_reason(command)
 
-        # Load session state
-        state = _ss.load_session_state(sid)
-        additional_context = None
-
         if safe:
-            # Proactive first-call briefing for new agents
+            # Only load state to check briefing status (skip disk read for already-briefed agents)
+            state = _ss.load_session_state(sid)
             if not _ss.is_agent_briefed(state, agent_id):
-                additional_context = PROACTIVE_BRIEFING
                 _ss.mark_agent_briefed(state, agent_id)
                 _ss.save_session_state(sid, state)
-            decision = "allow"
-            out_reason = None
-        else:
-            # Log rejection
-            pattern_key = _ss.extract_pattern_key(command, reason)
-            try:
-                log_rejection(sid[:8], command, reason=reason)
-            except Exception:
-                pass
+                with open(debug_log, "a") as f:
+                    f.write(f"[{sid[:8]}] allow: {command[:120]}\n")
+                output("allow", additional_context=PROACTIVE_BRIEFING)
+            with open(debug_log, "a") as f:
+                f.write(f"[{sid[:8]}] allow: {command[:120]}\n")
+            output("allow")
 
-            # Determine escalation
-            decision, guidance = build_escalation_response(
-                state, pattern_key, reason, agent_id, _GUIDANCE_MAP
-            )
+        state = _ss.load_session_state(sid)
+        pattern_key = _ss.extract_pattern_key(command, reason)
+        try:
+            log_rejection(sid[:8], command, reason=reason)
+        except Exception:
+            pass
 
-            # Record rejection and save state
-            _ss.record_rejection(state, pattern_key, reason, guidance, agent_id)
-            _ss.save_session_state(sid, state)
+        decision, guidance = build_escalation_response(
+            state, pattern_key, reason, _gm.STATIC_GUIDANCE
+        )
 
-            additional_context = guidance
-            out_reason = "Requires user approval" if decision == "ask" else guidance
+        _ss.record_rejection(state, pattern_key, reason, guidance, agent_id)
+        _ss.save_session_state(sid, state)
+
+        out_reason = "Requires user approval" if decision == "ask" else guidance
 
         with open(debug_log, "a") as f:
             f.write(f"[{sid[:8]}] {decision}: {command[:120]}\n")
-
-        # Build output with additionalContext
-        payload = {
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": decision,
-            }
-        }
-        if out_reason:
-            payload["hookSpecificOutput"]["permissionDecisionReason"] = out_reason
-        if additional_context:
-            payload["hookSpecificOutput"]["additionalContext"] = additional_context
-        print(json.dumps(payload))
-        sys.exit(0)
+        output(decision, out_reason, guidance)
 
     except Exception as e:
         with open(debug_log, "a") as f:
