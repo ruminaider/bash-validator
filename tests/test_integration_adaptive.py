@@ -114,7 +114,7 @@ class TestFullSessionLifecycle:
         assert "node -e" in briefing
         assert "5" in briefing  # 5 rejections (1 from step 4, 1 from step 5b, 3 from step 6)
 
-        # 8. Subagent B tries node -e: count is 4, gets deny
+        # 8. Subagent B tries node -e: count is 5, gets deny
         decision, guidance = build_escalation_response(
             state, pattern, "inline_exec", gmap
         )
