@@ -991,6 +991,13 @@ def main():
         )
 
         _ss.record_rejection(state, pattern_key, reason, guidance, agent_id)
+
+        agent_key = agent_id or "main"
+        if decision == "deny":
+            _ss.record_resolution(state, pattern_key, approved=False)
+        else:
+            state["prompted_agents"][agent_key] = pattern_key
+
         _ss.save_session_state(sid, state)
     except Exception as e:
         _debug_log(f"[{sid[:8]}] session error (escalation): {e}")

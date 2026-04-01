@@ -92,6 +92,56 @@ class TestEscalationSafetyGate:
         assert guidance is None
 
 
+    def test_deny_self_resolves_as_denial(self, tmp_path):
+        """When escalation returns 'deny', PreToolUse should immediately
+        record a denial so PostToolUse doesn't need to fire."""
+        state = _state_mod.load_session_state("s1", state_dir=str(tmp_path))
+        for i in range(3):
+            _state_mod.record_rejection(state, "node -e", "inline_exec", "msg", f"a{i}")
+        decision, guidance = build_escalation_response(
+            state, "node -e", "inline_exec",
+            _guidance_mod.STATIC_GUIDANCE
+        )
+        assert decision == "deny"
+        # Simulate what PreToolUse should do: self-resolve
+        _state_mod.record_rejection(state, "node -e", "inline_exec", guidance, "a1")
+        _state_mod.record_resolution(state, "node -e", approved=False)
+        assert state["patterns"]["node -e"]["denials"] == 1
+        # prompted_agents should NOT be set for deny
+        assert state.get("prompted_agents", {}).get("a1") is None
+
+
+class TestSignalSetting:
+    """PreToolUse sets prompted_agents signal on 'ask' decisions."""
+
+    def test_ask_sets_signal(self, tmp_path):
+        state = _state_mod.load_session_state("s1", state_dir=str(tmp_path))
+        decision, guidance = build_escalation_response(
+            state, "node -e", "inline_exec",
+            _guidance_mod.STATIC_GUIDANCE
+        )
+        assert decision == "ask"
+        # Simulate what PreToolUse should do: set signal
+        agent_key = "a1"
+        _state_mod.record_rejection(state, "node -e", "inline_exec", guidance, agent_key)
+        state["prompted_agents"][agent_key] = "node -e"
+        assert state["prompted_agents"]["a1"] == "node -e"
+
+    def test_deny_does_not_set_signal(self, tmp_path):
+        state = _state_mod.load_session_state("s1", state_dir=str(tmp_path))
+        for i in range(3):
+            _state_mod.record_rejection(state, "node -e", "inline_exec", "msg", f"a{i}")
+        decision, guidance = build_escalation_response(
+            state, "node -e", "inline_exec",
+            _guidance_mod.STATIC_GUIDANCE
+        )
+        assert decision == "deny"
+        # Simulate PreToolUse: record rejection + self-resolve, no signal
+        _state_mod.record_rejection(state, "node -e", "inline_exec", guidance, "a1")
+        _state_mod.record_resolution(state, "node -e", approved=False)
+        assert "a1" not in state.get("prompted_agents", {})
+
+
 class TestFirstCallBriefing:
     """First Bash call from a new agent gets a proactive briefing."""
 
