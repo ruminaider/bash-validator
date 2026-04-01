@@ -14,8 +14,10 @@ sys.path.insert(0, os.path.dirname(__file__))
 import session_state as _ss
 import guidance_map as _gm
 
-# Agent types that do NOT have Bash access
-_SKIP_AGENT_TYPES = {"statusline-setup", "magic-docs"}
+# Agent types that do NOT have Bash access.
+# Name-based approximation: the SubagentStart hook input does not include a
+# tools list, so we maintain this set of known non-Bash agent types.
+_SKIP_AGENT_TYPES = {"statusline-setup", "magic-docs", "claude-code-guide"}
 
 
 def should_brief_agent_type(agent_type):
@@ -25,8 +27,11 @@ def should_brief_agent_type(agent_type):
     return agent_type not in _SKIP_AGENT_TYPES
 
 
-def build_subagent_briefing(state):
-    """Build the briefing content from static rules + session state."""
+def build_subagent_briefing(state, gmap=None):
+    """Build the briefing content from static rules + session state + guidance map."""
+    if gmap is None:
+        gmap = _gm.load_guidance_map()
+
     lines = ["Bash validator rules for this session:"]
     lines.extend(f"- {rule}" for rule in _gm.PROACTIVE_RULES)
 
@@ -43,8 +48,19 @@ def build_subagent_briefing(state):
             lines.append("Already rejected this session (avoid these):")
             for pattern_key, data in structural:
                 count = data["rejections"]
-                guidance = data.get("last_guidance", "")
+                guidance = gmap.get(pattern_key) or data.get("last_guidance", "")
                 lines.append(f"- {pattern_key}: {count}x rejected. {guidance}")
+
+    # Cross-session warnings from enriched guidance map
+    enriched_warnings = [
+        (key, guidance) for key, guidance in gmap.items()
+        if key not in _gm.STATIC_GUIDANCE and key not in rejected and guidance
+    ]
+    if enriched_warnings:
+        lines.append("")
+        lines.append("Frequently rejected across prior sessions:")
+        for key, guidance in enriched_warnings[:5]:
+            lines.append(f"- {key}: {guidance}")
 
     return "\n".join(lines)
 

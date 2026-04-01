@@ -962,7 +962,7 @@ def main():
             pass
 
         decision, guidance = build_escalation_response(
-            state, pattern_key, reason, _gm.STATIC_GUIDANCE
+            state, pattern_key, reason, _gm.load_guidance_map()
         )
 
         _ss.record_rejection(state, pattern_key, reason, guidance, agent_id)

@@ -7,8 +7,14 @@ get guidance; safety gates (destructive commands) map to None.
 
 import json
 import os
+from collections import Counter
 
 GUIDANCE_MAP_PATH = os.path.expanduser("~/.config/bash-validator/guidance-map.json")
+STATS_LOG = os.path.expanduser("~/.config/bash-validator/session-stats.jsonl")
+
+# Thresholds for enriching guidance map from cross-session stats
+ENRICH_MIN_REJECTIONS = 5   # Total rejections across all sessions
+ENRICH_MIN_SESSIONS = 3     # Minimum distinct sessions
 
 # Escalation deny threshold: reject with "deny" after this many prior rejections
 DENY_THRESHOLD = 3
@@ -117,12 +123,74 @@ def lookup_guidance(gmap, reason):
     return None
 
 
-def generate_guidance_map(path=None):
-    """Write the guidance map to disk (called by SessionStart)."""
+def load_session_stats(path=None):
+    """Load session stats entries from the JSONL log."""
+    path = path or STATS_LOG
+    entries = []
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        entries.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+    except FileNotFoundError:
+        pass
+    return entries
+
+
+def enrich_guidance_map(base_map, stats_entries):
+    """Add informational entries for frequently rejected patterns.
+
+    Patterns with ENRICH_MIN_REJECTIONS+ rejections across
+    ENRICH_MIN_SESSIONS+ sessions get an informational guidance entry.
+    Never overrides existing entries in base_map.
+    """
+    pattern_rejections = Counter()
+    pattern_sessions = {}
+
+    for entry in stats_entries:
+        patterns = entry.get("patterns", {})
+        sid = entry.get("sid", "?")
+        for pattern_key, counts in patterns.items():
+            rejections = counts.get("rejections", 0)
+            if rejections > 0:
+                pattern_rejections[pattern_key] += rejections
+                if pattern_key not in pattern_sessions:
+                    pattern_sessions[pattern_key] = set()
+                pattern_sessions[pattern_key].add(sid)
+
+    enriched = dict(base_map)
+    for pattern_key, total in pattern_rejections.most_common():
+        if pattern_key in enriched:
+            continue
+        sessions_count = len(pattern_sessions.get(pattern_key, set()))
+        if total >= ENRICH_MIN_REJECTIONS and sessions_count >= ENRICH_MIN_SESSIONS:
+            enriched[pattern_key] = (
+                f"This pattern has been rejected {total} times "
+                f"across {sessions_count} sessions. "
+                f"Consider using an alternative approach."
+            )
+
+    return enriched
+
+
+def generate_guidance_map(path=None, stats_path=None):
+    """Write the guidance map to disk (called by SessionStart).
+
+    Enriches the static map with frequently rejected patterns from
+    session-stats.jsonl before writing.
+    """
     path = path or GUIDANCE_MAP_PATH
     os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    stats_entries = load_session_stats(stats_path)
+    enriched = enrich_guidance_map(STATIC_GUIDANCE, stats_entries)
+
     with open(path, "w") as f:
-        json.dump(STATIC_GUIDANCE, f, indent=2)
+        json.dump(enriched, f, indent=2)
 
 
 def load_guidance_map(path=None):
