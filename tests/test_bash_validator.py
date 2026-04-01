@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """Tests for bash-validator.py — the PreToolUse hook for Bash commands in Claude Code.
 
-The hook uses an allow/ask permission model:
+The hook uses an allow/ask/deny permission model:
   - "allow" for safe commands → auto-executes (bypasses permission checks)
-  - "ask"   for everything else → prompts the user for approval
+  - "ask"   for unsafe commands → prompts the user for approval
+  - "deny"  for structural patterns rejected 3+ times → blocks without prompting
 
-No commands are ever hard-denied; the user always gets to decide.
-
-Internal classification (check_command, _is_standalone_tier3) is tested
-separately for correctness of the safety analysis.
+Internal classification (check_command) is tested separately for correctness
+of the safety analysis.
 """
 
 import importlib.util
@@ -29,7 +28,6 @@ check_command = _mod.check_command
 check_segment = _mod.check_segment
 strip_safe_cat_heredocs = _mod.strip_safe_cat_heredocs
 strip_safe_subshells = _mod.strip_safe_subshells
-_is_standalone_tier3 = _mod._is_standalone_tier3
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1453,155 +1451,6 @@ class TestVarAssignmentEdgeCases:
         """PATH override is a var assignment — command is still checked."""
         assert check_command("PATH=/evil ls") is True
         assert check_command("PATH=/evil git status") is True
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# TIER 3 PASSTHROUGH: _is_standalone_tier3() tests
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class TestTier3PassthroughGit:
-    """Git commands with unknown subcommands should pass through for prompting."""
-
-    @pytest.mark.parametrize("cmd", [
-        "git push",
-        "git push origin main",
-        "git push --force",
-        "git push --force-with-lease",
-        "git reset --hard HEAD~1",
-        "git rebase main",
-        "git merge feature",
-        "git checkout .",
-        "git checkout -- file.txt",
-        "git cherry-pick abc123",
-        "git clean -fd",
-        "git switch main",
-        "git restore --staged file.txt",
-        "git revert HEAD",
-        "git bisect start",
-        "git submodule update",
-    ])
-    def test_git_unknown_subcommands_passthrough(self, cmd):
-        assert check_command(cmd) is False  # check_command still says "unsafe"
-        assert _is_standalone_tier3(cmd) is True  # but passthrough says "prompt"
-
-    @pytest.mark.parametrize("cmd", [
-        "git -C /repo push",
-        "git --no-pager push origin main",
-        "git -c user.name=foo push",
-        "git --git-dir=/path/.git push",
-    ])
-    def test_git_global_flags_with_unknown_subcommand_passthrough(self, cmd):
-        assert _is_standalone_tier3(cmd) is True
-
-
-class TestTier3PassthroughNonSafe:
-    """Commands not in SAFE_COMMANDS should pass through for prompting."""
-
-    @pytest.mark.parametrize("cmd", [
-        "rm file.txt",
-        "rm -rf /tmp/junk",
-        "kill 1234",
-        "kill -9 1234",
-        "chmod 777 file",
-        "chown root file",
-        "ssh user@host",
-        "scp file.txt user@host:/tmp/",
-        "terraform apply",
-        "kubectl apply -f deploy.yaml",
-        "psql -h localhost mydb",
-        "vercel deploy",
-        "stripe charges list",
-    ])
-    def test_unsafe_standalone_commands_passthrough(self, cmd):
-        assert check_command(cmd) is False
-        assert _is_standalone_tier3(cmd) is True
-
-
-class TestTier3NoPassthroughCompound:
-    """Compound commands must NOT pass through (first segment may match permissions.allow)."""
-
-    @pytest.mark.parametrize("cmd", [
-        "cd /path && git push",
-        "echo hello && rm -rf /",
-        "ls && docker run ubuntu",
-        "echo hello | ssh user@host",
-        "true || rm -rf /",
-        "echo hello ; kill 1234",
-    ])
-    def test_compound_with_unsafe_no_passthrough(self, cmd):
-        assert _is_standalone_tier3(cmd) is False
-
-    def test_newline_compound_no_passthrough(self):
-        assert _is_standalone_tier3("echo hello\nrm -rf /") is False
-        assert _is_standalone_tier3("ls\ngit push") is False
-
-
-class TestTier3NoPassthroughEnvPrefix:
-    """Commands with env/command prefix must NOT pass through."""
-
-    @pytest.mark.parametrize("cmd", [
-        "env rm -rf /",
-        "env docker run ubuntu",
-        "command rm -rf /",
-        "env git push",
-        "command git push",
-        "env env rm -rf /",
-    ])
-    def test_env_prefix_no_passthrough(self, cmd):
-        assert _is_standalone_tier3(cmd) is False
-
-
-class TestTier3NoPassthroughSafeCommands:
-    """Non-git SAFE_COMMANDS with dangerous flags are not standalone tier 3."""
-
-    @pytest.mark.parametrize("cmd", [
-        "node -e 'evil'",
-        "python -c 'evil'",
-        "find . -delete",
-        "rsync --delete src/ dst/",
-    ])
-    def test_safe_cmd_dangerous_flags_no_passthrough(self, cmd):
-        """Non-git commands in SAFE_COMMANDS with dangerous flags → not tier 3."""
-        assert _is_standalone_tier3(cmd) is False
-
-    @pytest.mark.parametrize("cmd", [
-        "git branch -D feature",
-        "git stash drop",
-        "git tag -d v1.0",
-        "git config --global user.name evil",
-    ])
-    def test_git_dangerous_flags_passthrough(self, cmd):
-        """Git with dangerous flags IS tier 3 (standalone git → always ask)."""
-        assert _is_standalone_tier3(cmd) is True
-
-    @pytest.mark.parametrize("cmd", [
-        "ls -la",
-        "echo hello",
-        "node script.js",
-        "python script.py",
-    ])
-    def test_tier1_commands_no_passthrough(self, cmd):
-        """Safe commands are handled by check_command, not passthrough."""
-        assert _is_standalone_tier3(cmd) is False
-
-    def test_git_safe_is_also_tier3(self):
-        """All standalone git → tier 3. But hook checks check_command() first,
-        so safe git commands get 'allow' before _is_standalone_tier3 is reached."""
-        assert _is_standalone_tier3("git status") is True
-        # In the actual hook: check_command("git status") is True → "allow"
-
-
-class TestTier3NoPassthroughComplex:
-    """Complex constructs should NOT pass through."""
-
-    @pytest.mark.parametrize("cmd", [
-        "echo $(rm -rf /)",
-        "echo `rm -rf /`",
-        "diff <(ls) <(ls)",
-        "cat <<EOF\nhello\nEOF",
-    ])
-    def test_complex_constructs_no_passthrough(self, cmd):
-        assert _is_standalone_tier3(cmd) is False
 
 
 class TestHookDecisionIntegration:

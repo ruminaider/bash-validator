@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""PreToolUse hook: validates Bash commands with allow/ask permissions.
+"""PreToolUse hook: validates Bash commands with allow/ask/deny permissions.
 
 Returns hookSpecificOutput with permissionDecision:
   - "allow" for safe commands → auto-executes (bypasses all permission checks)
-  - "ask"   for everything else → prompts the user for approval
+  - "ask"   for unsafe commands → prompts the user for approval
+  - "deny"  for structural patterns rejected 3+ times → blocks without prompting
 
-Decision: check_command() True → "allow", otherwise → "ask".
-No commands are ever hard-denied; the user always gets to decide.
+Decision: check_command() True → "allow". For unsafe commands, escalation
+logic may return "ask" or "deny" based on session rejection history.
 """
 
 import ast
@@ -791,77 +792,6 @@ def _get_segment_rejection_detail(segment):
 
     return "unsafe_segment"
 
-
-def _is_standalone_tier3(command):
-    """Check if command is a standalone Tier 3 command that should prompt.
-
-    Returns True for single-segment commands (no compound operators) whose
-    primary command is either:
-    - Not in SAFE_COMMANDS (rm, docker, ssh, etc.)
-    - A git command with an unknown subcommand (push, pull, reset, etc.)
-
-    These commands should be passed through to Claude Code's permission
-    system for user prompting, rather than hard-blocked by this hook.
-
-    Commands with env/command prefixes are NOT passed through because
-    they match 'Bash(env *)' in permissions.allow and would auto-allow.
-    Compound commands are NOT passed through because the first segment
-    may match a broad permissions.allow pattern (e.g., 'Bash(cd *)').
-    """
-    stripped = command.strip()
-    if not stripped:
-        return False
-
-    # Reject complex constructs (could hide dangerous commands)
-    if '$(' in stripped or '`' in stripped or '<<' in stripped:
-        return False
-    if '<(' in stripped or '>(' in stripped:
-        return False
-
-    # Reject compound commands (operators outside quotes)
-    normalized = stripped.replace('\n', ' ; ')
-    op_re = re.compile(r"""'[^']*'|"(?:[^"\\]|\\.)*"|\\.|&&|\|\||[;|]""")
-    for m in op_re.finditer(normalized):
-        if m.group() in ('&&', '||', ';', '|'):
-            return False
-
-    # Tokenize
-    try:
-        tokens = shlex.split(stripped)
-    except ValueError:
-        return False
-    if not tokens:
-        return False
-
-    # Reject env/command prefix (Bash(env *) in permissions.allow would auto-allow)
-    idx = 0
-    while idx < len(tokens):
-        if tokens[idx] in ('env', 'command'):
-            return False
-        if '=' in tokens[idx] and not tokens[idx].startswith('-'):
-            idx += 1
-        else:
-            break
-    if idx >= len(tokens):
-        return False
-
-    cmd_name = os.path.basename(tokens[idx])
-    rest = tokens[idx + 1:]
-
-    # Reject shell -c patterns (should be hard-denied, not prompted)
-    if cmd_name in ('bash', 'sh', 'zsh') and '-c' in rest:
-        return False
-
-    # Command NOT in SAFE_COMMANDS → Tier 3, pass through for prompting
-    if cmd_name not in SAFE_COMMANDS:
-        return True
-
-    # Any standalone git command that check_command() rejected → prompt user.
-    # The user can see the full command and decide; no need to hard-block.
-    if cmd_name == 'git':
-        return True
-
-    return False
 
 
 def log_rejection(session_id, command, reason=None):
