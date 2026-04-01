@@ -926,34 +926,59 @@ def build_escalation_response(state, pattern_key, reason, gmap):
         )
 
 
+def _debug_log(msg):
+    try:
+        with open("/tmp/bash-validator-debug.log", "a") as f:
+            f.write(msg + "\n")
+    except OSError:
+        pass
+
+
 def main():
-    debug_log = "/tmp/bash-validator-debug.log"
+    # --- Parse input ---
     try:
         raw = sys.stdin.read()
         hook_input = json.loads(raw)
         sid = hook_input.get("session_id", "?")
         agent_id = hook_input.get("agent_id")
         command = hook_input.get("tool_input", {}).get("command", "")
-        if not command:
-            with open(debug_log, "a") as f:
-                f.write(f"[{sid[:8]}] NO CMD\n")
-            output("allow")
+    except Exception as e:
+        _debug_log(f"[??] parse error: {e}")
+        output("allow")
+        return
 
+    if not command:
+        _debug_log(f"[{sid[:8]}] NO CMD")
+        output("allow")
+        return
+
+    # --- Core safety check ---
+    try:
         safe, reason = check_command_with_reason(command)
+    except Exception as e:
+        _debug_log(f"[{sid[:8]}] check error: {e}")
+        output("allow")
+        return
 
-        if safe:
-            # Only load state to check briefing status (skip disk read for already-briefed agents)
+    # --- Safe command path ---
+    if safe:
+        try:
             state = _ss.load_session_state(sid)
             if not _ss.is_agent_briefed(state, agent_id):
                 _ss.mark_agent_briefed(state, agent_id)
                 _ss.save_session_state(sid, state)
-                with open(debug_log, "a") as f:
-                    f.write(f"[{sid[:8]}] allow: {command[:120]}\n")
+                _debug_log(f"[{sid[:8]}] allow: {command[:120]}")
                 output("allow", additional_context=PROACTIVE_BRIEFING)
-            with open(debug_log, "a") as f:
-                f.write(f"[{sid[:8]}] allow: {command[:120]}\n")
-            output("allow")
+                return
+        except Exception as e:
+            _debug_log(f"[{sid[:8]}] session error (safe path): {e}")
+        _debug_log(f"[{sid[:8]}] allow: {command[:120]}")
+        output("allow")
+        return
 
+    # --- Unsafe command path: escalation ---
+    decision, guidance = "ask", None
+    try:
         state = _ss.load_session_state(sid)
         pattern_key = _ss.extract_pattern_key(command, reason)
         try:
@@ -967,17 +992,12 @@ def main():
 
         _ss.record_rejection(state, pattern_key, reason, guidance, agent_id)
         _ss.save_session_state(sid, state)
-
-        out_reason = "Requires user approval" if decision == "ask" else guidance
-
-        with open(debug_log, "a") as f:
-            f.write(f"[{sid[:8]}] {decision}: {command[:120]}\n")
-        output(decision, out_reason, guidance)
-
     except Exception as e:
-        with open(debug_log, "a") as f:
-            f.write(f"[??] EXCEPTION: {e}\n")
-        output("allow")
+        _debug_log(f"[{sid[:8]}] session error (escalation): {e}")
+
+    out_reason = "Requires user approval" if decision == "ask" else guidance
+    _debug_log(f"[{sid[:8]}] {decision}: {command[:120]}")
+    output(decision, out_reason, guidance)
 
 
 if __name__ == "__main__":
