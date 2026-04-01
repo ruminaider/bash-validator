@@ -68,6 +68,8 @@ SAFE_COMMANDS = {
     "rsync",
     # Containers (read-only subcommands; run/exec/rm/stop denied below)
     "docker",
+    # Documentation
+    "man",
     # Process info
     "lsof", "ps", "pgrep", "top",
     # Shell builtins (no-ops)
@@ -89,7 +91,7 @@ SAFE_COMMANDS = {
 SAFE_GIT_SUBCOMMANDS = {
     "status", "diff", "log", "show", "add", "commit", "fetch", "pull",
     "blame", "rev-parse", "ls-files", "remote", "config", "grep", "tag",
-    "stash", "worktree",
+    "stash", "worktree", "checkout",
     # Read-only inspection commands
     "ls-tree", "cat-file", "describe", "shortlog", "rev-list",
     "merge-base", "name-rev", "cherry", "diff-tree", "for-each-ref",
@@ -105,6 +107,7 @@ GIT_DANGEROUS_FLAGS = {
     "remote": {"remove", "rename", "set-url", "rm"},
     "config": {"--global", "--system", "--unset", "--unset-all",
                "--remove-section", "--rename-section"},
+    "checkout": {"--", "-f", "--force", "--ours", "--theirs", "--orphan"},
     "worktree": {"add", "remove", "prune", "move", "repair", "unlock"},
 }
 
@@ -115,9 +118,10 @@ SAFE_DOCKER_SUBCOMMANDS = {
     "compose",
 }
 
-# docker compose sub-subcommands that are read-only
+# docker compose sub-subcommands that are safe (read-only + standard dev workflow)
 SAFE_DOCKER_COMPOSE_SUBCOMMANDS = {
     "ps", "ls", "top", "logs", "images", "config", "version",
+    "up", "build", "start", "pull", "restart", "run",
     "events", "port", "alpha",
 }
 
@@ -182,7 +186,7 @@ SAFE_PYTHON_MODULES = {
     "datetime", "time", "calendar", "zoneinfo",
     "typing", "types", "abc", "dataclasses", "enum",
     "base64", "binascii", "codecs", "hashlib", "hmac",
-    "ast", "tokenize", "keyword",
+    "ast", "tokenize", "keyword", "inspect",
     "pprint", "reprlib",
     "copy", "contextlib", "warnings", "traceback", "struct",
 }
@@ -368,6 +372,31 @@ def check_segment(segment):
 
     cmd_name = os.path.basename(cleaned[idx])
     rest = cleaned[idx + 1:]
+
+    # Handle prefix/wrapper commands: validate the target command they wrap
+    PREFIX_COMMANDS = {'time'}
+    TIMEOUT_COMMANDS = {'timeout', 'gtimeout'}
+
+    if cmd_name in PREFIX_COMMANDS:
+        # 'time' takes no additional args before the command
+        target_segment = ' '.join(rest)
+        return check_segment(target_segment) if target_segment else True
+
+    if cmd_name in TIMEOUT_COMMANDS:
+        # timeout takes: [flags] duration command [args]
+        # Skip flags (some take a separate value), then skip the duration
+        TIMEOUT_VALUE_FLAGS = {'-s', '--signal', '-k', '--kill-after'}
+        ti = 0
+        while ti < len(rest) and rest[ti].startswith('-'):
+            if rest[ti] in TIMEOUT_VALUE_FLAGS:
+                ti += 2  # skip flag and its value
+            else:
+                ti += 1
+        ti += 1  # skip duration
+        if ti < len(rest):
+            target_segment = ' '.join(rest[ti:])
+            return check_segment(target_segment) if target_segment else True
+        return True
 
     # --- Deny patterns (checked before allow) ---
 
@@ -689,6 +718,32 @@ def strip_safe_subshells(cmd, _depth=0):
     return ''.join(result)
 
 
+def _contains_unquoted(cmd, pattern):
+    """Check if pattern appears outside single/double quotes."""
+    i = 0
+    while i < len(cmd):
+        if cmd[i] == "'":
+            j = cmd.find("'", i + 1)
+            if j == -1:
+                break
+            i = j + 1
+        elif cmd[i] == '"':
+            j = i + 1
+            while j < len(cmd):
+                if cmd[j] == '\\':
+                    j += 2
+                    continue
+                if cmd[j] == '"':
+                    break
+                j += 1
+            i = j + 1
+        elif cmd[i:i + len(pattern)] == pattern:
+            return True
+        else:
+            i += 1
+    return False
+
+
 def check_command(cmd, _depth=0):
     """Check if a full command string is safe."""
     safe, _ = check_command_with_reason(cmd, _depth=_depth)
@@ -714,12 +769,12 @@ def check_command_with_reason(cmd, _depth=0):
     # B1. Collapse line continuations (\ at end of line)
     cmd = re.sub(r'\\\n\s*', ' ', cmd)
 
-    # B. Pre-scan: reject constructs too complex to analyze
-    if re.search(r'\$\(|`', cmd):
+    # B. Pre-scan: reject constructs too complex to analyze (quoting-aware)
+    if _contains_unquoted(cmd, '$(') or _contains_unquoted(cmd, '`'):
         return False, "command_substitution"
-    if re.search(r'[<>]\(', cmd):
+    if _contains_unquoted(cmd, '<(') or _contains_unquoted(cmd, '>('):
         return False, "process_substitution"
-    if '<<' in cmd:
+    if _contains_unquoted(cmd, '<<'):
         return False, "heredoc"
 
     # C. Regex-based operator splitting (respects quoted strings)

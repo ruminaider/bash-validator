@@ -760,13 +760,8 @@ class TestDockerSubcommands:
         "docker build -t myapp .",
         "docker push myimage",
         "docker pull ubuntu",
-        "docker compose up",
-        "docker compose up -d",
         "docker compose down",
         "docker compose rm",
-        "docker compose build",
-        "docker compose restart",
-        "docker compose -p myproj up",
         "docker create ubuntu",
         "docker start mycontainer",
         "docker restart mycontainer",
@@ -841,7 +836,6 @@ class TestTier3GitMutating:
         "git reset --hard HEAD~1",
         "git rebase main",
         "git merge feature",
-        "git checkout .",
         "git checkout -- file.txt",
         "git cherry-pick abc123",
         "git clean -fd",
@@ -1307,7 +1301,6 @@ class TestGlobFalsePositiveSafety:
         "git push origin status",
         "git rebase --onto branch feature",
         "git reset --hard status",
-        "git checkout status",
         "git merge status-branch",
         "git cherry-pick status",
         "git revert status",
@@ -1599,7 +1592,7 @@ class TestDecisionMatrix:
         # Git unknown subcommands
         "git push", "git push origin main", "git push --force",
         "git reset --hard HEAD~1", "git rebase main",
-        "git merge feature", "git checkout .",
+        "git merge feature",
         "git cherry-pick abc123", "git clean -fd",
         "git switch main", "git restore --staged file.txt",
         # Git with global flags
@@ -1678,3 +1671,196 @@ class TestDecisionBoundaries:
     def test_shell_invocation(self):
         assert self._decision("bash script.sh") == "ask"
         assert self._decision("bash -c 'evil'") == "ask"
+
+
+# ===============================================================================
+# SAFE COMMAND EXPANSIONS (session: safe-command-expansions)
+# ===============================================================================
+
+class TestManCommand:
+    """man is read-only documentation lookup."""
+
+    @pytest.mark.parametrize("cmd", [
+        "man ls",
+        "man git",
+        "man 3 printf",
+        "man -k search-term",
+        "man bash",
+    ])
+    def test_man_safe(self, cmd):
+        assert check_command(cmd) is True
+
+
+class TestInspectPythonModule:
+    """inspect module is read-only reflection, safe for inline Python."""
+
+    def test_inspect_getsource(self):
+        assert check_command('python3 -c "import inspect; print(inspect.getsource(str))"') is True
+
+    def test_inspect_signature(self):
+        assert check_command('python3 -c "import inspect; print(inspect.signature(print))"') is True
+
+    def test_inspect_getmembers(self):
+        assert check_command('python3 -c "import inspect; print(inspect.getmembers(str))"') is True
+
+
+class TestDockerComposeDevWorkflow:
+    """docker compose up/build/start/pull/restart/run are standard dev ops."""
+
+    @pytest.mark.parametrize("cmd", [
+        "docker compose up",
+        "docker compose up -d",
+        "docker compose up -d --build",
+        "docker compose build",
+        "docker compose build web",
+        "docker compose start",
+        "docker compose start web",
+        "docker compose pull",
+        "docker compose pull web",
+        "docker compose restart",
+        "docker compose restart web",
+        "docker compose run web pytest",
+        "docker compose -p myproj up",
+        "docker compose -f docker-compose.yml up",
+        "docker compose --project-name myproj build",
+    ])
+    def test_docker_compose_dev_ops_allowed(self, cmd):
+        assert check_command(cmd) is True
+
+    @pytest.mark.parametrize("cmd", [
+        "docker compose down",
+        "docker compose down -v",
+        "docker compose exec web bash",
+        "docker compose rm",
+        "docker compose rm -f web",
+        "docker compose stop",
+        "docker compose kill",
+    ])
+    def test_docker_compose_destructive_denied(self, cmd):
+        assert check_command(cmd) is False
+
+
+class TestGitCheckoutWithFlags:
+    """git checkout: safe branch switching, dangerous with --, --force, etc."""
+
+    @pytest.mark.parametrize("cmd", [
+        "git checkout main",
+        "git checkout feature-branch",
+        "git checkout -b new-branch",
+        "git checkout -b feature origin/feature",
+        "git checkout -",
+        "git checkout HEAD~1",
+    ])
+    def test_git_checkout_branch_switching_allowed(self, cmd):
+        assert check_command(cmd) is True
+
+    @pytest.mark.parametrize("cmd", [
+        "git checkout -- file.txt",
+        "git checkout -- .",
+        "git checkout -- src/",
+        "git checkout -f main",
+        "git checkout --force main",
+        "git checkout --ours file.txt",
+        "git checkout --theirs file.txt",
+        "git checkout --orphan new-root",
+    ])
+    def test_git_checkout_dangerous_flags_denied(self, cmd):
+        assert check_command(cmd) is False
+
+    def test_git_checkout_with_global_flags(self):
+        """Global flags should not interfere with checkout flag checking."""
+        assert check_command("git -C /repo checkout main") is True
+        assert check_command("git --no-pager checkout feature") is True
+        assert check_command("git -C /repo checkout -- file.txt") is False
+        assert check_command("git --no-pager checkout --force main") is False
+
+
+class TestPrefixCommands:
+    """time, timeout, gtimeout wrap other commands."""
+
+    @pytest.mark.parametrize("cmd", [
+        "time make test",
+        "time pytest tests/",
+        "time git status",
+        "time ls -la",
+    ])
+    def test_time_with_safe_command_allowed(self, cmd):
+        assert check_command(cmd) is True
+
+    def test_time_with_unsafe_command_denied(self):
+        assert check_command("time rm -rf /") is False
+        assert check_command("time kill 1234") is False
+
+    @pytest.mark.parametrize("cmd", [
+        "timeout 30 pytest tests/",
+        "timeout 30 make test",
+        "timeout 10 git status",
+        "timeout 60 npm test",
+    ])
+    def test_timeout_with_safe_command_allowed(self, cmd):
+        assert check_command(cmd) is True
+
+    def test_timeout_with_unsafe_command_denied(self):
+        assert check_command("timeout 30 rm -rf /") is False
+        assert check_command("timeout 10 kill 1234") is False
+
+    @pytest.mark.parametrize("cmd", [
+        "gtimeout 10 git status",
+        "gtimeout 30 make build",
+        "gtimeout 5 pytest tests/ -x",
+    ])
+    def test_gtimeout_with_safe_command_allowed(self, cmd):
+        assert check_command(cmd) is True
+
+    def test_gtimeout_with_unsafe_command_denied(self):
+        assert check_command("gtimeout 10 rm -rf /") is False
+
+    def test_timeout_with_flags(self):
+        """timeout flags before duration should be skipped correctly."""
+        assert check_command("timeout --signal=KILL 30 make test") is True
+        assert check_command("timeout -s 9 30 pytest tests/") is True
+        assert check_command("timeout --preserve-status 30 ls") is True
+
+    def test_bare_time(self):
+        """Bare 'time' with no command is safe (just prints timing info)."""
+        assert check_command("time") is True
+
+    def test_bare_timeout(self):
+        """Bare 'timeout' with only duration is safe."""
+        assert check_command("timeout 30") is True
+
+
+class TestHeredocFalsePositives:
+    """<< inside quoted strings should not trigger heredoc rejection."""
+
+    def test_grep_merge_conflict_single_quotes(self):
+        """grep for merge conflict markers (single quotes)."""
+        assert check_command("grep -n '<<<<<<' file.txt") is True
+
+    def test_grep_merge_conflict_double_quotes(self):
+        """grep for merge conflict markers (double quotes)."""
+        assert check_command('grep "<<<<<<" file.txt') is True
+
+    def test_grep_merge_conflict_alternation(self):
+        """grep for multiple merge conflict markers."""
+        assert check_command(r"""grep '<<<<<<\|======\|>>>>>>' file.txt""") is True
+
+    def test_real_heredoc_still_rejected(self):
+        """Actual heredoc syntax (unquoted <<) should still be rejected."""
+        assert check_command("cat << EOF") is False
+        assert check_command("cat <<EOF\nhello\nEOF") is False
+        assert check_command('echo "hello" << EOF') is False
+
+    def test_backtick_in_quotes_not_rejected(self):
+        """Backtick inside quotes should not trigger command substitution."""
+        assert check_command("echo 'hello `world`'") is True
+        assert check_command('echo "literal \\`backtick\\`"') is True
+
+    def test_dollar_paren_in_quotes_not_rejected(self):
+        """$( inside quotes should not trigger command substitution."""
+        assert check_command("echo 'hello $(world)'") is True
+
+    def test_process_sub_in_quotes_not_rejected(self):
+        """<( and >( inside quotes should not trigger process substitution."""
+        assert check_command("echo '<(not a process sub)'") is True
+        assert check_command("echo '>(not a process sub)'") is True

@@ -581,7 +581,7 @@ class TestImmutableDenyCompleteness:
 
     def test_critical_git_subcommands_in_deny_list(self, immutable_deny):
         """Verify critical dangerous git subcommands are in the deny list."""
-        critical = {"push", "reset", "rebase", "clean", "checkout"}
+        critical = {"push", "reset", "rebase", "clean"}
         never_safe_git = set(immutable_deny["never_safe_git_subcommands"])
         missing = critical - never_safe_git
         assert missing == set(), f"Critical git subcommands missing from deny list: {missing}"
