@@ -86,8 +86,20 @@ def main():
             }
         }
         print(json.dumps(result))
-    except Exception:
-        print(json.dumps({}))
+    except Exception as e:
+        try:
+            with open("/tmp/bash-validator-debug.log", "a") as f:
+                f.write(f"[subagent-start] EXCEPTION: {e}\n")
+        except OSError:
+            pass
+        # Fallback: inject static rules even if state/guidance loading failed
+        fallback = "Bash validator rules: " + ". ".join(_gm.PROACTIVE_RULES) + "."
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "SubagentStart",
+                "additionalContext": fallback,
+            }
+        }))
 
     sys.exit(0)
 

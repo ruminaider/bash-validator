@@ -42,8 +42,14 @@ def main():
         state = _ss.load_session_state(sid)
         instructions = build_compact_instructions(state)
         print(instructions)
-    except Exception:
-        pass
+    except Exception as e:
+        try:
+            with open("/tmp/bash-validator-debug.log", "a") as f:
+                f.write(f"[pre-compact] EXCEPTION: {e}\n")
+        except OSError:
+            pass
+        # Fallback: preserve static rules even on failure
+        print("Preserve bash validator rules: Use Write/Read/Grep/Glob tools instead of cat/grep/find via Bash. Inline code requires safe modules only. Write script files for complex analysis.")
 
     sys.exit(0)
 

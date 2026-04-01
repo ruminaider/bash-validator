@@ -307,8 +307,12 @@ def main():
     try:
         raw = sys.stdin.read()
         # SessionStart may or may not pass hook_input
-    except Exception:
-        pass
+    except Exception as e:
+        try:
+            with open("/tmp/bash-validator-debug.log", "a") as f:
+                f.write(f"[session-start] stdin read EXCEPTION: {e}\n")
+        except OSError:
+            pass
 
     immutable = load_json(IMMUTABLE_DENY, {})
     learned = load_json(LEARNED_RULES, {
@@ -319,14 +323,22 @@ def main():
     # Generate guidance map for PreToolUse hook
     try:
         _gm.generate_guidance_map()
-    except Exception:
-        pass
+    except Exception as e:
+        try:
+            with open("/tmp/bash-validator-debug.log", "a") as f:
+                f.write(f"[session-start] generate_guidance_map EXCEPTION: {e}\n")
+        except OSError:
+            pass
 
     # Clean up stale session state files
     try:
         _ss.cleanup_stale_sessions()
-    except Exception:
-        pass
+    except Exception as e:
+        try:
+            with open("/tmp/bash-validator-debug.log", "a") as f:
+                f.write(f"[session-start] cleanup_stale_sessions EXCEPTION: {e}\n")
+        except OSError:
+            pass
 
     entries = load_rejections()
     if not entries:
@@ -336,8 +348,12 @@ def main():
     # Layer 3: Update skill guidance based on rejection patterns
     try:
         update_skill_guidance(entries)
-    except Exception:
-        pass
+    except Exception as e:
+        try:
+            with open("/tmp/bash-validator-debug.log", "a") as f:
+                f.write(f"[session-start] update_skill_guidance EXCEPTION: {e}\n")
+        except OSError:
+            pass
 
     proposals = analyze_patterns(entries, immutable, learned)
     if not proposals:

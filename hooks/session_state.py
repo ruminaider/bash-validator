@@ -24,7 +24,7 @@ def load_session_state(sid, state_dir=None):
     try:
         with open(path) as f:
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError):
         return {
             "sid": sid,
             "started": datetime.now(timezone.utc).isoformat(),
@@ -141,15 +141,14 @@ def delete_session_state(sid, state_dir=None):
 
 def cleanup_stale_sessions(max_age_hours=24, state_dir=None):
     """Delete session state files older than max_age_hours."""
+    import glob
     d = state_dir or SESSION_STATE_DIR
     now = datetime.now(timezone.utc).timestamp()
-    prefix = "bash-validator-session-"
-    for fname in os.listdir(d):
-        if fname.startswith(prefix) and fname.endswith(".json"):
-            path = os.path.join(d, fname)
-            try:
-                age = now - os.path.getmtime(path)
-                if age > max_age_hours * 3600:
-                    os.unlink(path)
-            except OSError:
-                pass
+    pattern = os.path.join(d, "bash-validator-session-*.json")
+    for path in glob.glob(pattern):
+        try:
+            age = now - os.path.getmtime(path)
+            if age > max_age_hours * 3600:
+                os.unlink(path)
+        except OSError:
+            pass

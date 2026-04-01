@@ -96,6 +96,7 @@ def rotate_rejection_log(log_path=None, max_bytes=1_000_000, keep_entries=500):
             os.unlink(tmp_path)
         except OSError:
             pass
+        raise
 
 
 def main():
@@ -105,17 +106,40 @@ def main():
         sid = hook_input.get("session_id", "?")
 
         state = _ss.load_session_state(sid)
-        flush_session_stats(state)
-        _ss.delete_session_state(sid)
 
-        # Rotate rejection log if needed
+        try:
+            flush_session_stats(state)
+        except Exception as e:
+            try:
+                with open("/tmp/bash-validator-debug.log", "a") as f:
+                    f.write(f"[session-end] flush_stats failed: {e}\n")
+            except OSError:
+                pass
+
+        try:
+            _ss.delete_session_state(sid)
+        except Exception as e:
+            try:
+                with open("/tmp/bash-validator-debug.log", "a") as f:
+                    f.write(f"[session-end] delete_state failed: {e}\n")
+            except OSError:
+                pass
+
         try:
             rotate_rejection_log()
-        except Exception:
-            pass
+        except Exception as e:
+            try:
+                with open("/tmp/bash-validator-debug.log", "a") as f:
+                    f.write(f"[session-end] rotate_log failed: {e}\n")
+            except OSError:
+                pass
 
-    except Exception:
-        pass
+    except Exception as e:
+        try:
+            with open("/tmp/bash-validator-debug.log", "a") as f:
+                f.write(f"[session-end] EXCEPTION: {e}\n")
+        except OSError:
+            pass
 
     print(json.dumps({}))
     sys.exit(0)

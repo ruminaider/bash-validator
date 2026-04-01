@@ -41,8 +41,12 @@ def main():
         resolve_prompted(state, agent_id=agent_id, tool_error=is_error)
         _ss.save_session_state(sid, state)
 
-    except Exception:
-        pass
+    except Exception as e:
+        try:
+            with open("/tmp/bash-validator-debug.log", "a") as f:
+                f.write(f"[post-tool-use] EXCEPTION: {e}\n")
+        except OSError:
+            pass
 
     print(json.dumps({}))
     sys.exit(0)
