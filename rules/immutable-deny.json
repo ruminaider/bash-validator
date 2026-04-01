@@ -17,7 +17,7 @@
   ],
   "never_safe_git_subcommands": [
     "push", "reset", "rebase", "merge", "cherry-pick",
-    "clean", "checkout", "switch", "restore",
+    "clean", "switch", "restore",
     "submodule", "subtree", "gc", "prune",
     "filter-branch", "replace", "notes"
   ],
