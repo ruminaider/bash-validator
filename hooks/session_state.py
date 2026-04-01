@@ -31,6 +31,7 @@ def load_session_state(sid, state_dir=None):
             "patterns": {},
             "agents_briefed": [],
             "last_rejected_pattern": None,
+            "prompted_agents": {},
         }
 
 

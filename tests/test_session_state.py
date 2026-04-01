@@ -22,6 +22,12 @@ extract_pattern_key = _mod.extract_pattern_key
 SESSION_STATE_DIR = _mod.SESSION_STATE_DIR
 
 
+class TestSessionState:
+    def test_initial_state_has_prompted_agents(self, tmp_path):
+        state = load_session_state("new-session", state_dir=str(tmp_path))
+        assert state["prompted_agents"] == {}
+
+
 class TestSessionStateBasics:
     def test_load_nonexistent_returns_empty(self, tmp_path):
         state = load_session_state("nonexistent", state_dir=str(tmp_path))
