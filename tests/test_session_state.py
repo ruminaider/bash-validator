@@ -14,6 +14,7 @@ _spec.loader.exec_module(_mod)
 
 load_session_state = _mod.load_session_state
 save_session_state = _mod.save_session_state
+delete_session_state = _mod.delete_session_state
 record_rejection = _mod.record_rejection
 record_resolution = _mod.record_resolution
 is_agent_briefed = _mod.is_agent_briefed
@@ -135,3 +136,32 @@ class TestExtractPatternKey:
 
     def test_plain_command(self):
         assert extract_pattern_key("rm -rf /tmp/test", "unsafe_segment") == "rm"
+
+
+class TestDeleteSessionState:
+    def test_delete_existing_state(self, tmp_path):
+        state = load_session_state("s1", state_dir=str(tmp_path))
+        save_session_state("s1", state, state_dir=str(tmp_path))
+        delete_session_state("s1", state_dir=str(tmp_path))
+        path = os.path.join(str(tmp_path), "bash-validator-session-s1.json")
+        assert not os.path.exists(path)
+
+    def test_delete_nonexistent_is_silent(self, tmp_path):
+        delete_session_state("nonexistent", state_dir=str(tmp_path))  # should not raise
+
+
+class TestPatternKeyEdgeCases:
+    def test_docker_subcommand(self):
+        assert extract_pattern_key("docker run myimage", "unsafe_segment") == "docker run"
+
+    def test_docker_with_flag(self):
+        assert extract_pattern_key("docker --version", "unsafe_segment") == "docker"
+
+    def test_empty_command(self):
+        assert extract_pattern_key("", "unsafe_segment") == "unknown"
+
+    def test_absolute_path_command(self):
+        assert extract_pattern_key("/usr/bin/python3 -c 'print(1)'", "inline_exec") == "python3 -c"
+
+    def test_absolute_path_node(self):
+        assert extract_pattern_key("/usr/local/bin/node -e 'console.log(1)'", "inline_exec") == "node -e"
