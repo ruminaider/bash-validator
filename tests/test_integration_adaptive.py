@@ -89,8 +89,9 @@ class TestFullSessionLifecycle:
         assert guidance is not None
         _state_mod.record_rejection(state, pattern, "inline_exec", guidance, "agentA")
 
-        # 5. User approves
-        _post_mod.resolve_pending_rejections(state, tool_error=False)
+        # 5. User approves (signal set by PreToolUse, resolved by PostToolUse)
+        state["prompted_agents"]["agentA"] = pattern
+        _post_mod.resolve_prompted(state, agent_id="agentA", tool_error=False)
         assert state["patterns"][pattern]["approvals"] == 1
 
         # 6. Subagent A retries node -e three more times
