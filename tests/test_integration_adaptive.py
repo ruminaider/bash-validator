@@ -94,6 +94,15 @@ class TestFullSessionLifecycle:
         _post_mod.resolve_prompted(state, agent_id="agentA", tool_error=False)
         assert state["patterns"][pattern]["approvals"] == 1
 
+        # 5b. Agent B runs a safe command: should NOT resolve Agent A's patterns
+        _state_mod.record_rejection(state, pattern, "inline_exec", "msg", "agentA")
+        state["prompted_agents"]["agentA"] = pattern
+        _post_mod.resolve_prompted(state, agent_id="agentB", tool_error=False)
+        assert state["patterns"][pattern]["approvals"] == 1  # unchanged
+        assert state["prompted_agents"]["agentA"] == pattern  # untouched
+        # Clean up: resolve Agent A's pending for subsequent steps
+        _post_mod.resolve_prompted(state, agent_id="agentA", tool_error=False)
+
         # 6. Subagent A retries node -e three more times
         for i in range(3):
             _state_mod.record_rejection(state, pattern, "inline_exec", "msg", "agentA")
@@ -103,7 +112,7 @@ class TestFullSessionLifecycle:
         state = _state_mod.load_session_state("session1", state_dir=str(tmp_path))
         briefing = _subagent_mod.build_subagent_briefing(state)
         assert "node -e" in briefing
-        assert "4" in briefing  # 4 rejections
+        assert "5" in briefing  # 5 rejections (1 from step 4, 1 from step 5b, 3 from step 6)
 
         # 8. Subagent B tries node -e: count is 4, gets deny
         decision, guidance = build_escalation_response(
@@ -111,6 +120,11 @@ class TestFullSessionLifecycle:
         )
         assert decision == "deny"
         assert "continue" in guidance.lower()
+
+        # 8b. Deny self-resolution (PreToolUse resolves immediately)
+        _state_mod.record_rejection(state, pattern, "inline_exec", guidance, "agentB")
+        _state_mod.record_resolution(state, pattern, approved=False)
+        assert state["patterns"][pattern]["denials"] >= 1
 
         # 9. Safety gate: rm never escalates
         for i in range(10):
