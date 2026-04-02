@@ -1448,7 +1448,12 @@ class TestVarAssignmentEdgeCases:
 
 
 class TestHookDecisionIntegration:
-    """Integration tests: the hook returns allow/ask (never deny)."""
+    """Integration tests for check_command: returns allow or ask.
+
+    Note: these test check_command() directly, not main(). The deny
+    decision comes from escalation logic in main(), tested separately
+    in test_escalation.py and TestOutputFormat.
+    """
 
     def _hook_decision(self, cmd):
         """Simulate the hook's decision logic: allow if safe, ask otherwise."""
@@ -1567,7 +1572,10 @@ class TestErrorFallbacks:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestDecisionMatrix:
-    """Exhaustive test: every command → either allow or ask. Never deny."""
+    """Exhaustive test: check_command() returns allow or ask for every command.
+
+    Deny decisions come from session escalation in main(), not check_command().
+    """
 
     def _decision(self, cmd):
         return "allow" if check_command(cmd) else "ask"

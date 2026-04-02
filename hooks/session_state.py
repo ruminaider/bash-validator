@@ -1,8 +1,9 @@
 """Shared session state for bash-validator hooks.
 
 Provides read/write access to the per-session state file that enables
-communication between PreToolUse, PostToolUse, SubagentStart, PreCompact,
-and SessionEnd hooks. Keyed by root session_id (shared across all agents).
+communication between SessionStart, PreToolUse, PostToolUse, SubagentStart,
+PreCompact, and SessionEnd hooks. Keyed by root session_id (shared across
+all agents).
 """
 
 import json
@@ -24,15 +25,28 @@ def load_session_state(sid, state_dir=None):
     try:
         with open(path) as f:
             return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {
-            "sid": sid,
-            "started": datetime.now(timezone.utc).isoformat(),
-            "patterns": {},
-            "agents_briefed": [],
-            "last_rejected_pattern": None,
-            "prompted_agents": {},
-        }
+    except FileNotFoundError:
+        pass
+    except json.JSONDecodeError:
+        try:
+            with open("/tmp/bash-validator-debug.log", "a") as f:
+                f.write(f"[session_state] corrupt state file: {path}\n")
+        except OSError:
+            pass
+    except OSError as e:
+        try:
+            with open("/tmp/bash-validator-debug.log", "a") as f:
+                f.write(f"[session_state] load error: {e}\n")
+        except OSError:
+            pass
+    return {
+        "sid": sid,
+        "started": datetime.now(timezone.utc).isoformat(),
+        "patterns": {},
+        "agents_briefed": [],
+        "last_rejected_pattern": None,
+        "prompted_agents": {},
+    }
 
 
 def save_session_state(sid, state, state_dir=None):
@@ -116,8 +130,10 @@ def extract_pattern_key(command, reason):
 
     if reason == "inline_exec":
         parts = command.split()
-        cmd = os.path.basename(parts[0]) if parts else "unknown"
-        return f"{cmd} -e" if cmd == "node" else f"{cmd} -c"
+        if not parts:
+            return "unknown -c"
+        cmd = os.path.basename(parts[0])
+        return f"{cmd} -e" if cmd in ("node", "deno", "bun") else f"{cmd} -c"
 
     parts = command.split()
     if not parts:
