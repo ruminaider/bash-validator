@@ -845,6 +845,19 @@ def _get_segment_rejection_detail(segment):
             if not tok.startswith('-'):
                 break
 
+    # Check for non-Python inline exec (node -e, ruby -e, deno eval, bun eval)
+    if cmd_name in INLINE_EXEC_FLAGS and cmd_name not in ('python', 'python3'):
+        exec_flags = INLINE_EXEC_FLAGS[cmd_name]
+        for tok in rest:
+            if tok in exec_flags:
+                return "inline_exec"
+            if not tok.startswith('-'):
+                break
+
+    # Check for shell -c (bash, sh, zsh are not in INLINE_EXEC_FLAGS)
+    if cmd_name in ('bash', 'sh', 'zsh') and rest and rest[0] == '-c':
+        return "inline_exec"
+
     return "unsafe_segment"
 
 

