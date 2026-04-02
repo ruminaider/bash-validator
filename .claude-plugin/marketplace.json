@@ -1,7 +1,7 @@
 {
   "name": "bash-validator-marketplace",
   "description": "Bash command safety validator with adaptive learning",
-  "lastUpdated": "2026-03-20",
+  "lastUpdated": "2026-04-01",
   "owner": {
     "name": "Albert Gwo",
     "url": "https://github.com/ruminaider"
@@ -10,7 +10,7 @@
     {
       "name": "bash-validator",
       "description": "Validates Bash commands against a safety whitelist before execution",
-      "version": "2.3.0",
+      "version": "2.4.0",
       "author": {
         "name": "Albert Gwo"
       },

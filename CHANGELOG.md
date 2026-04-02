@@ -2,6 +2,36 @@
 
 All notable changes to bash-validator are documented here.
 
+## [2.4.0] - 2026-04-01
+
+### Added
+
+- **Session intelligence** (six-hook feedback loop): SessionStart, SubagentStart, PreToolUse, PostToolUse, PreCompact, and SessionEnd hooks form a complete session lifecycle. Together they reduce unnecessary validator prompts by briefing subagents proactively and escalating structural rejections.
+- **Shared session state** (`session_state.py`): per-session state file at `/tmp/bash-validator-session-{sid}.json` with atomic writes. Tracks rejection patterns, agent briefing status, and per-agent prompt signals across all agents in a session.
+- **Guidance map** (`guidance_map.py`): maps rejection reasons to actionable guidance strings sent via `additionalContext`. Enriched from cross-session stats: patterns rejected 5+ times across 3+ sessions get informational entries.
+- **Escalation policy**: structural reasons (heredoc, inline code, command substitution) escalate from guidance (first rejection) to denial (3+ rejections). Safety gates (destructive commands) always defer to the user regardless of count.
+- **Per-agent signal-based resolution** (`prompted_agents`): PreToolUse sets a signal when returning "ask"; PostToolUse reads and clears it. This prevents cross-agent approval bleed and deny leakage.
+- **SubagentStart briefing**: every subagent with Bash access receives validator rules plus session-specific rejected patterns at spawn, eliminating cold-start retry storms.
+- **PreCompact preservation**: validator rules survive context compaction via custom compaction instructions.
+- **SessionEnd stats**: aggregated session statistics flushed to `~/.config/bash-validator/session-stats.jsonl` for long-term analysis. Rejection log rotated when it exceeds 1 MB.
+
+### Improved
+
+- All bare `except Exception: pass` blocks now log to `/tmp/bash-validator-debug.log` before falling back.
+- PreCompact and SubagentStart emit static rules as degraded-mode fallback on failure.
+- PreToolUse uses narrowed try blocks: session errors on the unsafe path default to "ask" (not "allow").
+- `load_session_state` catches all `OSError` variants, not just `FileNotFoundError`.
+- `cleanup_stale_sessions` uses `glob.glob` instead of listing all of `/tmp`.
+- `rotate_rejection_log` re-raises after temp file cleanup to surface errors.
+
+### Removed
+
+- `_is_standalone_tier3` function and its tests (dead code, never called).
+
+### Fixed
+
+- Documentation: corrected "no commands are ever hard-denied" (now reflects deny behavior), "single-file validator" (now multi-module), and "python3 -c always prompts" (AST analysis can auto-approve).
+
 ## [2.3.0] - 2026-03-20
 
 ### Added

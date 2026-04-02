@@ -4,8 +4,9 @@
 
 | Version | Supported |
 |---------|-----------|
-| 2.0.x   | Yes       |
-| < 2.0   | No        |
+| 2.4.x   | Yes       |
+| 2.3.x   | Yes       |
+| < 2.3   | No        |
 
 ## Reporting a Vulnerability
 
@@ -30,7 +31,7 @@ Instead, email the maintainer directly or use [GitHub's private vulnerability re
 
 ## Security Model
 
-bash-validator uses an **allow/ask** model — no commands are ever silently blocked. The validator auto-approves commands it can statically verify as safe and prompts the user for everything else.
+bash-validator uses an **allow/ask/deny** model. The validator auto-approves commands it can statically verify as safe and prompts the user for everything else. Structural patterns (heredoc, inline code, command substitution) that are rejected 3+ times in a session escalate to denial. Safety gates (destructive commands) always defer to the user.
 
 ### Trust layers
 

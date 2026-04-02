@@ -1,5 +1,5 @@
 {
   "name": "bash-validator",
   "description": "Validates Bash commands against a safety whitelist before execution",
-  "version": "2.3.0"
+  "version": "2.4.0"
 }
