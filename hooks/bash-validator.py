@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""PreToolUse hook: validates Bash commands with allow/ask permissions.
+"""PreToolUse hook: validates Bash commands with allow/ask/deny permissions.
 
 Returns hookSpecificOutput with permissionDecision:
   - "allow" for safe commands → auto-executes (bypasses all permission checks)
-  - "ask"   for everything else → prompts the user for approval
+  - "ask"   for unsafe commands → prompts the user for approval
+  - "deny"  for structural patterns rejected 3+ times → blocks without prompting
 
-Decision: check_command() True → "allow", otherwise → "ask".
-No commands are ever hard-denied; the user always gets to decide.
+Decision: check_command() True → "allow". For unsafe commands, escalation
+logic may return "ask" or "deny" based on session rejection history.
 """
 
 import ast
@@ -17,6 +18,10 @@ import re
 import shlex
 import sys
 from datetime import datetime, timezone
+
+sys.path.insert(0, os.path.dirname(__file__))
+import session_state as _ss
+import guidance_map as _gm
 
 # --- A. Whitelist ---
 
@@ -303,7 +308,7 @@ def is_safe_inline_js(code_str):
     return True
 
 
-def output(decision, reason=None):
+def output(decision, reason=None, additional_context=None):
     payload = {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
@@ -312,6 +317,8 @@ def output(decision, reason=None):
     }
     if reason:
         payload["hookSpecificOutput"]["permissionDecisionReason"] = reason
+    if additional_context:
+        payload["hookSpecificOutput"]["additionalContext"] = additional_context
     print(json.dumps(payload))
     sys.exit(0)
 
@@ -838,79 +845,21 @@ def _get_segment_rejection_detail(segment):
             if not tok.startswith('-'):
                 break
 
+    # Check for non-Python inline exec (node -e, ruby -e, deno eval, bun eval)
+    if cmd_name in INLINE_EXEC_FLAGS and cmd_name not in ('python', 'python3'):
+        exec_flags = INLINE_EXEC_FLAGS[cmd_name]
+        for tok in rest:
+            if tok in exec_flags:
+                return "inline_exec"
+            if not tok.startswith('-'):
+                break
+
+    # Check for shell -c (bash, sh, zsh are not in INLINE_EXEC_FLAGS)
+    if cmd_name in ('bash', 'sh', 'zsh') and rest and rest[0] == '-c':
+        return "inline_exec"
+
     return "unsafe_segment"
 
-
-def _is_standalone_tier3(command):
-    """Check if command is a standalone Tier 3 command that should prompt.
-
-    Returns True for single-segment commands (no compound operators) whose
-    primary command is either:
-    - Not in SAFE_COMMANDS (rm, docker, ssh, etc.)
-    - A git command with an unknown subcommand (push, pull, reset, etc.)
-
-    These commands should be passed through to Claude Code's permission
-    system for user prompting, rather than hard-blocked by this hook.
-
-    Commands with env/command prefixes are NOT passed through because
-    they match 'Bash(env *)' in permissions.allow and would auto-allow.
-    Compound commands are NOT passed through because the first segment
-    may match a broad permissions.allow pattern (e.g., 'Bash(cd *)').
-    """
-    stripped = command.strip()
-    if not stripped:
-        return False
-
-    # Reject complex constructs (could hide dangerous commands)
-    if '$(' in stripped or '`' in stripped or '<<' in stripped:
-        return False
-    if '<(' in stripped or '>(' in stripped:
-        return False
-
-    # Reject compound commands (operators outside quotes)
-    normalized = stripped.replace('\n', ' ; ')
-    op_re = re.compile(r"""'[^']*'|"(?:[^"\\]|\\.)*"|\\.|&&|\|\||[;|]""")
-    for m in op_re.finditer(normalized):
-        if m.group() in ('&&', '||', ';', '|'):
-            return False
-
-    # Tokenize
-    try:
-        tokens = shlex.split(stripped)
-    except ValueError:
-        return False
-    if not tokens:
-        return False
-
-    # Reject env/command prefix (Bash(env *) in permissions.allow would auto-allow)
-    idx = 0
-    while idx < len(tokens):
-        if tokens[idx] in ('env', 'command'):
-            return False
-        if '=' in tokens[idx] and not tokens[idx].startswith('-'):
-            idx += 1
-        else:
-            break
-    if idx >= len(tokens):
-        return False
-
-    cmd_name = os.path.basename(tokens[idx])
-    rest = tokens[idx + 1:]
-
-    # Reject shell -c patterns (should be hard-denied, not prompted)
-    if cmd_name in ('bash', 'sh', 'zsh') and '-c' in rest:
-        return False
-
-    # Command NOT in SAFE_COMMANDS → Tier 3, pass through for prompting
-    if cmd_name not in SAFE_COMMANDS:
-        return True
-
-    # Any standalone git command that check_command() rejected → prompt user.
-    # The user can see the full command and decide; no need to hard-block.
-    if cmd_name == 'git':
-        return True
-
-    return False
 
 
 def log_rejection(session_id, command, reason=None):
@@ -938,32 +887,122 @@ def log_rejection(session_id, command, reason=None):
         f.write(json.dumps(entry) + "\n")
 
 
+# --- Session-aware escalation ---
+
+PROACTIVE_BRIEFING = "Bash validator rules: " + ". ".join(_gm.PROACTIVE_RULES) + "."
+
+
+def build_escalation_response(state, pattern_key, reason, gmap):
+    """Determine escalation decision and guidance for a rejection.
+
+    Returns (decision, guidance) where:
+    - decision is "ask" or "deny"
+    - guidance is a string for additionalContext, or None for safety gates
+    """
+    if not _gm.is_structural_reason(reason):
+        return "ask", None
+
+    base_guidance = _gm.lookup_guidance(gmap, reason)
+    if not base_guidance:
+        return "ask", None
+
+    count = state.get("patterns", {}).get(pattern_key, {}).get("rejections", 0)
+
+    if count == 0:
+        return "ask", base_guidance
+    elif count < _gm.DENY_THRESHOLD:
+        return "ask", (
+            f"This pattern ({pattern_key}) has been rejected "
+            f"{count} time(s) this session. {base_guidance}"
+        )
+    else:
+        return "deny", (
+            f"This pattern ({pattern_key}) has been rejected "
+            f"{count} times this session and will not be approved. "
+            f"{base_guidance} Please continue with your task using "
+            f"the suggested alternative."
+        )
+
+
+def _debug_log(msg):
+    try:
+        with open("/tmp/bash-validator-debug.log", "a") as f:
+            f.write(msg + "\n")
+    except OSError:
+        pass
+
+
 def main():
-    debug_log = "/tmp/bash-validator-debug.log"
+    # --- Parse input ---
     try:
         raw = sys.stdin.read()
         hook_input = json.loads(raw)
-        sid = hook_input.get("session_id", "?")[:8]
+        sid = hook_input.get("session_id", "?")
+        agent_id = hook_input.get("agent_id")
         command = hook_input.get("tool_input", {}).get("command", "")
-        if not command:
-            with open(debug_log, "a") as f:
-                f.write(f"[{sid}] NO CMD\n")
-            output("allow")
-        safe, reason = check_command_with_reason(command)
-        if not safe:
-            try:
-                log_rejection(sid, command, reason=reason)
-            except Exception:
-                pass
-        decision = "allow" if safe else "ask"
-        reason = None if safe else "Requires user approval"
-        with open(debug_log, "a") as f:
-            f.write(f"[{sid}] {decision}: {command[:120]}\n")
-        output(decision, reason)
-    except Exception as e:
-        with open(debug_log, "a") as f:
-            f.write(f"[??] EXCEPTION: {e}\n")
+    except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as e:
+        _debug_log(f"[??] parse error: {e}")
+        output("ask", reason="Validator could not parse hook input")
+        return
+
+    if not command:
+        _debug_log(f"[{sid[:8]}] NO CMD")
         output("allow")
+        return
+
+    # --- Core safety check ---
+    try:
+        safe, reason = check_command_with_reason(command)
+    except Exception as e:
+        _debug_log(f"[{sid[:8]}] check error: {e}")
+        output("ask", reason="Internal validator error")
+        return
+
+    # --- Safe command path ---
+    if safe:
+        try:
+            state = _ss.load_session_state(sid)
+            if not _ss.is_agent_briefed(state, agent_id):
+                _ss.mark_agent_briefed(state, agent_id)
+                _ss.save_session_state(sid, state)
+                _debug_log(f"[{sid[:8]}] allow: {command[:120]}")
+                output("allow", additional_context=PROACTIVE_BRIEFING)
+                return
+        except Exception as e:
+            _debug_log(f"[{sid[:8]}] session error (safe path): {e}")
+        _debug_log(f"[{sid[:8]}] allow: {command[:120]}")
+        output("allow")
+        return
+
+    # --- Unsafe command path: escalation ---
+    decision, guidance = "ask", None
+    try:
+        state = _ss.load_session_state(sid)
+        pattern_key = _ss.extract_pattern_key(command, reason)
+        try:
+            log_rejection(sid[:8], command, reason=reason)
+        except Exception as e:
+            _debug_log(f"[{sid[:8]}] log_rejection failed: {e}")
+
+        decision, guidance = build_escalation_response(
+            state, pattern_key, reason, _gm.load_guidance_map()
+        )
+
+        _ss.record_rejection(state, pattern_key, reason, guidance, agent_id)
+
+        agent_key = agent_id or "main"
+        if decision == "deny":
+            _ss.record_resolution(state, pattern_key, approved=False)
+        else:
+            state["prompted_agents"][agent_key] = pattern_key
+
+        _ss.save_session_state(sid, state)
+    except Exception as e:
+        _debug_log(f"[{sid[:8]}] session error (escalation): {e}")
+
+    out_reason = "Requires user approval" if decision == "ask" else guidance
+    _debug_log(f"[{sid[:8]}] {decision}: {command[:120]}")
+    output(decision, out_reason, guidance)
 
 
 if __name__ == "__main__":

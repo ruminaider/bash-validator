@@ -6,7 +6,7 @@ A Claude Code plugin with two layers: a **skill** that teaches subagents to gene
 
 1. **Prevention** — The `validator-friendly-commands` skill (in `skills/`) activates when a subagent generates Bash commands that format JSON. It guides the subagent toward verifiable forms (`jq`, `--jq`, script files) before the command reaches the hook. Because the skill ships with the plugin, it works in every project.
 
-2. **Enforcement** — The `bash-validator.py` hook (in `hooks/`) runs on every Bash command. It auto-approves commands whose structure is statically verifiable and prompts the user for everything else. No command is ever hard-denied.
+2. **Enforcement** — The `bash-validator.py` hook (in `hooks/`) runs on every Bash command. It auto-approves commands whose structure is statically verifiable and prompts the user for everything else. Structural patterns (heredoc, inline code, command substitution) that are rejected 3+ times in a session escalate to denial.
 
 The skill handles the common case; the hook catches everything else.
 
@@ -19,7 +19,7 @@ When generating Bash commands — especially in subagents — choose forms the v
 This applies to formatting JSON output from CLI tools (`gh`, `curl`, `aws`, `kubectl`). Use `python3` when you genuinely need file I/O, multiple data sources, non-JSON processing, or logic that would be unreadable in jq.
 
 ```bash
-# Triggers prompt (python3 -c is unverifiable)
+# Triggers prompt (multiline python3 -c is hard to parse correctly)
 gh issue list --json number,title | python3 -c "
 import sys, json
 for i in json.load(sys.stdin):
@@ -58,8 +58,8 @@ echo '{"title": "test"}' | jq -r '.title'
 ### Use script files instead of interpreter `-c` flags
 
 ```bash
-# Triggers prompt
-python3 -c "import json; print(json.dumps({'key': 'val'}))"
+# Triggers prompt (os module is not in the safe list)
+python3 -c "import os; print(os.listdir('.'))"
 
 # Auto-approves
 python3 scripts/format_output.py
@@ -69,12 +69,13 @@ python3 scripts/format_output.py
 
 - `gh` with any flags, including `--jq`
 - Any safe command piped to `jq`
-- `git` with safe subcommands (`status`, `diff`, `log`, `add`, `commit`, `fetch`, `pull`, `blame`, `rev-parse`, `ls-files`, `remote`, `config`, `grep`, `tag`, `stash`, `worktree`)
+- `git` with safe subcommands (`status`, `diff`, `log`, `show`, `add`, `commit`, `fetch`, `pull`, `blame`, `rev-parse`, `ls-files`, `remote`, `config`, `grep`, `tag`, `stash`, `worktree`, and others; see `SAFE_GIT_SUBCOMMANDS` in `bash-validator.py` for the full set)
 - Interpreter commands running script files (no `-c`, `-e`, or `--eval`)
 
 ### Patterns that always prompt
 
-- `python3 -c`, `node -e`, `ruby -e`, `deno eval`, `bun eval`
+- `python3 -c` with unsafe modules or builtins (safe-only code auto-approves via AST analysis), `node -e` with dangerous APIs (safe-only code auto-approves via pattern matching)
+- `ruby -e`, `deno eval`, `bun eval`
 - `bash -c`, `sh -c`, `zsh -c`
 - Command substitution: `` `...` `` or `$(...)`
 - Process substitution: `<(...)` or `>(...)`
@@ -84,13 +85,12 @@ python3 scripts/format_output.py
 
 ## Architecture
 
-Single-file validator at `hooks/bash-validator.py`. Key functions:
+Core validator at `hooks/bash-validator.py`, with shared modules `session_state.py` and `guidance_map.py`. Key functions:
 
 - `check_command(cmd)` — entry point; returns `True` (safe) or `False` (ask user)
 - `check_segment(segment)` — validates a single command (no operators)
 - `strip_safe_cat_heredocs(cmd)` — replaces `$(cat <<'DELIM'...DELIM)` with placeholders
 - `strip_safe_subshells(cmd)` — recursively validates `(...)` groups
-- `_is_standalone_tier3(cmd)` — identifies unknown commands that should pass through to Claude Code's permission system rather than be hard-blocked
 
 ## Testing
 
@@ -131,3 +131,16 @@ The SessionStart hook updates the `validator-friendly-commands` skill with
 recently rejected patterns, so subagents learn to generate better commands.
 Updates are written between `<!-- DYNAMIC:START -->` and `<!-- DYNAMIC:END -->`
 markers in the skill file.
+
+## Session Intelligence
+
+The validator uses six hooks to provide session-aware guidance:
+
+- **SessionStart**: Generates the guidance-map and cleans up stale session state
+- **SubagentStart**: Briefs subagents (except known non-Bash types) with validator rules and session-specific warnings
+- **PreToolUse:Bash**: Enforces rules with escalating `additionalContext` guidance
+- **PostToolUse:Bash**: Records user approval/denial outcomes
+- **PreCompact**: Preserves validator rules across context compaction
+- **SessionEnd**: Flushes session stats for long-term analysis
+
+Session state is shared across all agents (main + subagents) via `/tmp/bash-validator-session-{sid}.json`. Escalation applies only to structural reasons (heredoc, inline code, command substitution), not safety gates (destructive commands).
