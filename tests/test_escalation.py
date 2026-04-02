@@ -142,6 +142,68 @@ class TestSignalSetting:
         assert "a1" not in state.get("prompted_agents", {})
 
 
+class TestEndToEndEscalation:
+    """End-to-end: real commands through check_command_with_reason into escalation."""
+
+    def test_node_e_escalates_to_deny(self, tmp_path):
+        safe, reason = _validator_mod.check_command_with_reason("node -e 'require(\"fs\")'")
+        assert not safe
+        assert reason == "inline_exec", f"Expected inline_exec, got {reason}"
+
+        state = _state_mod.load_session_state("s1", state_dir=str(tmp_path))
+        pattern_key = extract_pattern_key("node -e 'require(\"fs\")'", reason)
+        for i in range(3):
+            _state_mod.record_rejection(state, pattern_key, reason, "msg", f"a{i}")
+        decision, guidance = build_escalation_response(
+            state, pattern_key, reason, _guidance_mod.STATIC_GUIDANCE
+        )
+        assert decision == "deny"
+
+    def test_bash_c_escalates_to_deny(self, tmp_path):
+        safe, reason = _validator_mod.check_command_with_reason("bash -c 'echo pwned'")
+        assert not safe
+        assert reason == "inline_exec"
+
+        state = _state_mod.load_session_state("s1", state_dir=str(tmp_path))
+        pattern_key = extract_pattern_key("bash -c 'echo pwned'", reason)
+        for i in range(3):
+            _state_mod.record_rejection(state, pattern_key, reason, "msg", f"a{i}")
+        decision, guidance = build_escalation_response(
+            state, pattern_key, reason, _guidance_mod.STATIC_GUIDANCE
+        )
+        assert decision == "deny"
+
+    def test_ruby_e_escalates_to_deny(self, tmp_path):
+        safe, reason = _validator_mod.check_command_with_reason("ruby -e 'puts 1'")
+        assert not safe
+        assert reason == "inline_exec"
+
+        state = _state_mod.load_session_state("s1", state_dir=str(tmp_path))
+        pattern_key = extract_pattern_key("ruby -e 'puts 1'", reason)
+        for i in range(3):
+            _state_mod.record_rejection(state, pattern_key, reason, "msg", f"a{i}")
+        decision, guidance = build_escalation_response(
+            state, pattern_key, reason, _guidance_mod.STATIC_GUIDANCE
+        )
+        assert decision == "deny"
+
+    def test_safety_gate_never_escalates_end_to_end(self, tmp_path):
+        """rm commands should never escalate, even through the full chain."""
+        safe, reason = _validator_mod.check_command_with_reason("rm -rf /tmp/junk")
+        assert not safe
+        assert reason == "unsafe_segment"
+
+        state = _state_mod.load_session_state("s1", state_dir=str(tmp_path))
+        pattern_key = extract_pattern_key("rm -rf /tmp/junk", reason)
+        for i in range(10):
+            _state_mod.record_rejection(state, pattern_key, reason, None, f"a{i}")
+        decision, guidance = build_escalation_response(
+            state, pattern_key, reason, _guidance_mod.STATIC_GUIDANCE
+        )
+        assert decision == "ask"
+        assert guidance is None
+
+
 class TestFirstCallBriefing:
     """First Bash call from a new agent gets a proactive briefing."""
 

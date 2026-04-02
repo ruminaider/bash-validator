@@ -1543,6 +1543,41 @@ class TestOutputFormat:
         out = self._run_hook("")
         assert out["hookSpecificOutput"]["permissionDecision"] == "allow"
 
+    def test_deny_output_after_escalation(self):
+        """The deny path through main() must produce correct JSON output."""
+        sid = "denytest-" + str(os.getpid())
+        state = {
+            "sid": sid,
+            "started": "2026-01-01T00:00:00+00:00",
+            "patterns": {
+                "node -e": {"rejections": 3, "reason": "inline_exec"}
+            },
+            "agents_briefed": ["main"],
+            "last_rejected_pattern": "node -e",
+            "prompted_agents": {},
+        }
+        state_path = f"/tmp/bash-validator-session-{sid}.json"
+        try:
+            with open(state_path, "w") as f:
+                json.dump(state, f)
+
+            hook_input = json.dumps({
+                "session_id": sid,
+                "tool_input": {"command": "node -e 'require(\"fs\")'"},
+            })
+            result = subprocess.run(
+                [sys.executable, HOOK_SCRIPT_PATH],
+                input=hook_input, capture_output=True, text=True,
+            )
+            out = json.loads(result.stdout)
+            assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+            assert "additionalContext" in out["hookSpecificOutput"]
+        finally:
+            try:
+                os.unlink(state_path)
+            except OSError:
+                pass
+
 
 class TestErrorFallbacks:
     """Error paths in main() must default to 'ask', not 'allow'."""
