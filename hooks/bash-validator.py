@@ -981,8 +981,8 @@ def main():
         pattern_key = _ss.extract_pattern_key(command, reason)
         try:
             log_rejection(sid[:8], command, reason=reason)
-        except Exception:
-            pass
+        except Exception as e:
+            _debug_log(f"[{sid[:8]}] log_rejection failed: {e}")
 
         decision, guidance = build_escalation_response(
             state, pattern_key, reason, _gm.load_guidance_map()
