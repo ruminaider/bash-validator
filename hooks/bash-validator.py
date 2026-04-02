@@ -927,9 +927,9 @@ def main():
         sid = hook_input.get("session_id", "?")
         agent_id = hook_input.get("agent_id")
         command = hook_input.get("tool_input", {}).get("command", "")
-    except Exception as e:
+    except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as e:
         _debug_log(f"[??] parse error: {e}")
-        output("allow")
+        output("ask", reason="Validator could not parse hook input")
         return
 
     if not command:
@@ -942,7 +942,7 @@ def main():
         safe, reason = check_command_with_reason(command)
     except Exception as e:
         _debug_log(f"[{sid[:8]}] check error: {e}")
-        output("allow")
+        output("ask", reason="Internal validator error")
         return
 
     # --- Safe command path ---

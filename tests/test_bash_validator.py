@@ -1538,6 +1538,29 @@ class TestOutputFormat:
         assert out["hookSpecificOutput"]["permissionDecision"] == "allow"
 
 
+class TestErrorFallbacks:
+    """Error paths in main() must default to 'ask', not 'allow'."""
+
+    def _run_hook(self, stdin_input):
+        """Run the hook with raw stdin, return parsed JSON output."""
+        result = subprocess.run(
+            [sys.executable, HOOK_SCRIPT_PATH],
+            input=stdin_input, capture_output=True, text=True,
+        )
+        return json.loads(result.stdout)
+
+    def test_malformed_json_defaults_to_ask(self):
+        out = self._run_hook("NOT VALID JSON {{{")
+        assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+    def test_tool_input_not_a_dict_defaults_to_ask(self):
+        out = self._run_hook(json.dumps({
+            "session_id": "s1",
+            "tool_input": "not a dict",
+        }))
+        assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # DECISION MATRIX: Exhaustive command → allow or ask mapping
 # ═══════════════════════════════════════════════════════════════════════════════
