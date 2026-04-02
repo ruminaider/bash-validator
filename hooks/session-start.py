@@ -11,6 +11,7 @@ Returns additionalContext with a summary of any newly learned patterns.
 import json
 import os
 import sys
+import tempfile
 from collections import Counter
 from datetime import datetime, timezone
 
@@ -297,8 +298,18 @@ def update_skill_guidance(entries):
         else:
             content = content.rstrip() + "\n\n" + new_section + "\n"
 
-        with open(SKILL_PATH, "w") as f:
-            f.write(content)
+        dir_path = os.path.dirname(SKILL_PATH)
+        fd, tmp_path = tempfile.mkstemp(dir=dir_path, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(content)
+            os.replace(tmp_path, SKILL_PATH)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
     except (FileNotFoundError, IOError):
         pass
 
