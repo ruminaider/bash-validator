@@ -19,7 +19,7 @@ When generating Bash commands — especially in subagents — choose forms the v
 This applies to formatting JSON output from CLI tools (`gh`, `curl`, `aws`, `kubectl`). Use `python3` when you genuinely need file I/O, multiple data sources, non-JSON processing, or logic that would be unreadable in jq.
 
 ```bash
-# Triggers prompt (python3 -c with unsafe modules)
+# Triggers prompt (multiline python3 -c is hard to parse correctly)
 gh issue list --json number,title | python3 -c "
 import sys, json
 for i in json.load(sys.stdin):
@@ -58,8 +58,8 @@ echo '{"title": "test"}' | jq -r '.title'
 ### Use script files instead of interpreter `-c` flags
 
 ```bash
-# Triggers prompt
-python3 -c "import json; print(json.dumps({'key': 'val'}))"
+# Triggers prompt (os module is not in the safe list)
+python3 -c "import os; print(os.listdir('.'))"
 
 # Auto-approves
 python3 scripts/format_output.py
@@ -69,12 +69,12 @@ python3 scripts/format_output.py
 
 - `gh` with any flags, including `--jq`
 - Any safe command piped to `jq`
-- `git` with safe subcommands (`status`, `diff`, `log`, `add`, `commit`, `fetch`, `pull`, `blame`, `rev-parse`, `ls-files`, `remote`, `config`, `grep`, `tag`, `stash`, `worktree`)
+- `git` with safe subcommands (`status`, `diff`, `log`, `show`, `add`, `commit`, `fetch`, `pull`, `blame`, `rev-parse`, `ls-files`, `remote`, `config`, `grep`, `tag`, `stash`, `worktree`, and others; see `SAFE_GIT_SUBCOMMANDS` in `bash-validator.py` for the full set)
 - Interpreter commands running script files (no `-c`, `-e`, or `--eval`)
 
 ### Patterns that always prompt
 
-- `python3 -c` with unsafe modules or builtins, `node -e` with dangerous APIs (safe-only inline code auto-approves via AST analysis)
+- `python3 -c` with unsafe modules or builtins (safe-only code auto-approves via AST analysis), `node -e` with dangerous APIs (safe-only code auto-approves via pattern matching)
 - `ruby -e`, `deno eval`, `bun eval`
 - `bash -c`, `sh -c`, `zsh -c`
 - Command substitution: `` `...` `` or `$(...)`
