@@ -67,3 +67,43 @@ class TestResolvePrompted:
         resolve_prompted(state, agent_id=None, tool_error=False)
         assert state["patterns"]["heredoc"]["approvals"] == 1
         assert "main" not in state["prompted_agents"]
+
+
+class TestPostToolUseMain:
+    """Integration tests for the PostToolUse main() function's error detection."""
+
+    def test_string_rejection_resolves_as_denial(self, tmp_path):
+        """When tool_result is a string containing rejection text, treat as error."""
+        sid = "posttest1"
+        state = _state_mod.load_session_state(sid, state_dir=str(tmp_path))
+        _state_mod.record_rejection(state, "node -e", "inline_exec", "msg", None)
+        state["prompted_agents"]["main"] = "node -e"
+        _state_mod.save_session_state(sid, state, state_dir=str(tmp_path))
+
+        reloaded = _state_mod.load_session_state(sid, state_dir=str(tmp_path))
+        _mod.resolve_prompted(reloaded, agent_id=None, tool_error=True)
+        assert reloaded["patterns"]["node -e"].get("denials", 0) == 1
+
+    def test_dict_error_resolves_as_denial(self, tmp_path):
+        """When tool_result is a dict with is_error=True, treat as error."""
+        sid = "posttest2"
+        state = _state_mod.load_session_state(sid, state_dir=str(tmp_path))
+        _state_mod.record_rejection(state, "heredoc", "heredoc", "msg", "agent1")
+        state["prompted_agents"]["agent1"] = "heredoc"
+        _state_mod.save_session_state(sid, state, state_dir=str(tmp_path))
+
+        reloaded = _state_mod.load_session_state(sid, state_dir=str(tmp_path))
+        _mod.resolve_prompted(reloaded, agent_id="agent1", tool_error=True)
+        assert reloaded["patterns"]["heredoc"].get("denials", 0) == 1
+
+    def test_successful_tool_records_approval(self, tmp_path):
+        """When tool succeeds, record as approval."""
+        sid = "posttest3"
+        state = _state_mod.load_session_state(sid, state_dir=str(tmp_path))
+        _state_mod.record_rejection(state, "node -e", "inline_exec", "msg", None)
+        state["prompted_agents"]["main"] = "node -e"
+        _state_mod.save_session_state(sid, state, state_dir=str(tmp_path))
+
+        reloaded = _state_mod.load_session_state(sid, state_dir=str(tmp_path))
+        _mod.resolve_prompted(reloaded, agent_id=None, tool_error=False)
+        assert reloaded["patterns"]["node -e"].get("approvals", 0) == 1
