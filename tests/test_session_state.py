@@ -150,6 +150,35 @@ class TestDeleteSessionState:
         delete_session_state("nonexistent", state_dir=str(tmp_path))  # should not raise
 
 
+class TestLoadSessionStateCorruption:
+    """Corrupt state files should be logged, not silently ignored."""
+
+    def test_corrupt_json_returns_fresh_state(self, tmp_path):
+        """Corrupt state file should return fresh state."""
+        state_file = tmp_path / "bash-validator-session-corrupt1.json"
+        state_file.write_text("{truncated")
+        state = _mod.load_session_state("corrupt1", state_dir=str(tmp_path))
+        assert state["sid"] == "corrupt1"
+        assert state["patterns"] == {}
+
+    def test_missing_file_returns_fresh_state(self, tmp_path):
+        """Missing state file should return fresh state."""
+        state = _mod.load_session_state("missing1", state_dir=str(tmp_path))
+        assert state["sid"] == "missing1"
+
+
+class TestExtractPatternKeyEdgeCases:
+    """Edge cases for extract_pattern_key."""
+
+    def test_inline_exec_with_empty_command(self):
+        key = _mod.extract_pattern_key("", "inline_exec")
+        assert key == "unknown -c"
+
+    def test_inline_exec_with_whitespace_only(self):
+        key = _mod.extract_pattern_key("   ", "inline_exec")
+        assert key == "unknown -c"
+
+
 class TestPatternKeyEdgeCases:
     def test_docker_subcommand(self):
         assert extract_pattern_key("docker run myimage", "unsafe_segment") == "docker run"
